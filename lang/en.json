@@ -4,10 +4,11 @@
     "InsufficientFunds": "You cannot afford {name}.",
     "PurchaseNone": "Your cart is empty.",
     "PurchaseFailed": "Purchase failed - insufficient funds.",
-    "PurchaseSuccess": "Purchased {count} item(s) for {spent} currency.",
+    "PurchaseSuccess": "Purchased {count} item(s) for {spent}.",
     "NoActor": "You do not have an owned Hero character to shop with.",
     "ChatIntro": "{gm} invites you to visit the {name}.",
     "ChatOpenShop": "Open {name}",
+    "OpenShopButton": "Open Shop",
 
     "ManagerTitle": "Manage Shops",
     "NewShop": "New Shop",

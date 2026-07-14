@@ -56,7 +56,7 @@ export class CrucibleShopApp extends HandlebarsApplicationMixin(ApplicationV2) {
   #search = new foundry.applications.ux.SearchFilter({
     inputSelector: ".shop-search",
     contentSelector: ".shop-list",
-    callback: CrucibleShopApp.#onSearchFilter
+    callback: (event, query, rgx, html) => this.#onSearchFilter(event, query, rgx, html)
   });
 
   /**
@@ -265,6 +265,24 @@ export class CrucibleShopApp extends HandlebarsApplicationMixin(ApplicationV2) {
   }
 
   /* -------------------------------------------- */
+
+  /**
+   * Format a raw base-unit currency amount as a human-readable denomination string, e.g. "3gp 5sp".
+   * @param {number} amount
+   * @returns {string}
+   */
+  static formatCurrency(amount) {
+    const allocated = crucible.api.documents.CrucibleActor.allocateCurrency(amount);
+    const parts = [];
+    for ( const [k, v] of Object.entries(allocated) ) {
+      if ( !v ) continue;
+      const abbreviation = game.i18n.localize(crucible.CONFIG.currency[k]?.abbreviation ?? k);
+      parts.push(`${v}${abbreviation}`);
+    }
+    return parts.length ? parts.join(" ") : `0${game.i18n.localize(crucible.CONFIG.currency.cp?.abbreviation ?? "cp")}`;
+  }
+
+  /* -------------------------------------------- */
   /*  Event Handlers                               */
   /* -------------------------------------------- */
 
@@ -385,7 +403,7 @@ export class CrucibleShopApp extends HandlebarsApplicationMixin(ApplicationV2) {
     if ( toCreate.length ) await this.actor.createEmbeddedDocuments("Item", toCreate);
     if ( toUpdate.length ) await this.actor.updateEmbeddedDocuments("Item", toUpdate);
 
-    ui.notifications.info(game.i18n.format("CRUCIBLE_SHOP.PurchaseSuccess", {count, spent}));
+    ui.notifications.info(game.i18n.format("CRUCIBLE_SHOP.PurchaseSuccess", {count, spent: CrucibleShopApp.formatCurrency(spent)}));
     this._state.cart = {};
     await this.render({parts: ["shop"]});
   }

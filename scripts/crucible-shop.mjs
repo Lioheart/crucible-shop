@@ -72,6 +72,7 @@ Hooks.once("ready", () => {
     CrucibleShopManagerApp
   };
 
+  // GM: "Shop Manager" button in the Items directory, used to create/curate shops and invite players.
   Hooks.on("renderItemDirectory", (app, html) => {
     if (!game.user.isGM) return;
 

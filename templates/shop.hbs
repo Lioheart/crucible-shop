@@ -6,8 +6,10 @@
       <input type="text" class="shop-search" placeholder="{{localize 'CRUCIBLE_SHOP.SearchPlaceholder'}}"/>
     </div>
     <div class="shop-currency">
-      <i class="fa-solid fa-coins"></i>
-      <span>{{localize "CRUCIBLE_SHOP.Remaining"}}: <strong>{{remaining}}</strong> / {{currency}}</span>
+      <span>{{localize "CRUCIBLE_SHOP.Remaining"}}:</span>
+      <crucible-currency class="remaining" value="{{remaining}}" readonly></crucible-currency>
+      <span>/</span>
+      <crucible-currency class="total" value="{{currency}}" readonly></crucible-currency>
     </div>
   </header>
 
@@ -53,7 +55,7 @@
           </div>
           {{/if}}
         </div>
-        <span class="item-price"><i class="fa-solid fa-coins"></i> {{item.price}}</span>
+        <crucible-currency class="item-price" value="{{item.price}}" readonly></crucible-currency>
         <div class="item-controls">
           {{#if item.quantity}}
           <a class="remove" data-action="removeItem" data-uuid="{{item.uuid}}"><i class="fa-solid fa-minus"></i></a>
@@ -75,7 +77,7 @@
         <li class="cart-entry {{#if item.unaffordable}}unaffordable{{/if}}" data-uuid="{{item.uuid}}">
           <img src="{{item.img}}" alt="{{item.name}}"/>
           <span class="item-name">{{item.name}} <span class="qty">x{{item.quantity}}</span></span>
-          <span class="item-total"><i class="fa-solid fa-coins"></i> {{item.totalCost}}</span>
+          <crucible-currency class="item-total" value="{{item.totalCost}}" readonly></crucible-currency>
           <a class="remove" data-action="removeItem" data-uuid="{{item.uuid}}"><i class="fa-solid fa-xmark"></i></a>
         </li>
         {{/each}}
