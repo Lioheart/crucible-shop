@@ -84,8 +84,9 @@ Hooks.once("ready", () => {
     button.classList.add("crucible-shop-button");
     button.innerHTML = `<i class="fas fa-store"></i> ${game.i18n.localize("CRUCIBLE_SHOP.ManagerTitle")}`;
     button.addEventListener("click", () => new CrucibleShopManagerApp().render({force: true}));
-    const actionButtons = root.querySelector(".action-buttons") ?? root.querySelector(".directory-header") ?? root;
-    actionButtons.append(button);
+    const anchor = root.querySelector('[data-action="createFolder"]') ?? root.querySelector('[data-action="createEntry"]');
+    if ( !anchor ) return;
+    anchor.after(button);
   });
 
   // Console/macro convenience.
