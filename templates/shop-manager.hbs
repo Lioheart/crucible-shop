@@ -36,8 +36,16 @@
         </select>
       </div>
       <div class="form-group">
+        <label data-tooltip="{{localize 'CRUCIBLE_SHOP.BuyRateHint'}}">{{localize "CRUCIBLE_SHOP.BuyRate"}}</label>
+        <input type="number" class="shop-buy-rate-input" min="0" max="500" step="5" value="{{selected.buyRate}}"/>
+      </div>
+      <div class="form-group">
         <label data-tooltip="{{localize 'CRUCIBLE_SHOP.SellRateHint'}}">{{localize "CRUCIBLE_SHOP.SellRate"}}</label>
-        <input type="number" class="shop-sell-rate-input" min="0" max="200" step="5" value="{{selected.sellRate}}"/>
+        <input type="number" class="shop-sell-rate-input" min="0" max="500" step="5" value="{{selected.sellRate}}"/>
+      </div>
+      <div class="form-group form-group-checkbox">
+        <label data-tooltip="{{localize 'CRUCIBLE_SHOP.RequireApprovalHint'}}">{{localize "CRUCIBLE_SHOP.RequireApproval"}}</label>
+        <input type="checkbox" class="shop-require-approval-input" {{#if selected.requireApproval}}checked{{/if}}/>
       </div>
       <button type="button" class="preview-shop" data-action="openShop">
         <i class="fa-solid fa-eye"></i> {{localize "CRUCIBLE_SHOP.Preview"}}
@@ -96,6 +104,45 @@
       </button>
       {{/unless}}
     </div>
+
+    {{#if showPendingPanel}}
+    <div class="pending-requests-panel">
+      <h3>{{localize "CRUCIBLE_SHOP.PendingRequests"}}</h3>
+      {{#if noPendingRequests}}
+      <p class="hint">{{localize "CRUCIBLE_SHOP.NoPendingRequests"}}</p>
+      {{else}}
+      <ol class="pending-requests-list">
+        {{#each pendingRequests as |req|}}
+        <li class="pending-request-entry" data-message-id="{{req.messageId}}">
+          <div class="pending-request-summary">
+            <i class="fa-solid {{#if req.isBuy}}fa-cart-shopping{{else}}fa-hand-holding-dollar{{/if}}"></i>
+            <span>
+              {{#if req.isBuy}}
+              {{localize "CRUCIBLE_SHOP.PendingBuySummary" user=req.userName actor=req.actorName total=req.total}}
+              {{else}}
+              {{localize "CRUCIBLE_SHOP.PendingSellSummary" user=req.userName actor=req.actorName total=req.total}}
+              {{/if}}
+            </span>
+          </div>
+          <ul class="pending-request-items">
+            {{#each req.entries as |entry|}}
+            <li>{{entry.name}} <span class="qty">x{{entry.quantity}}</span></li>
+            {{/each}}
+          </ul>
+          <div class="pending-request-actions">
+            <button type="button" class="deny" data-action="denyRequest">
+              <i class="fa-solid fa-xmark"></i> {{localize "CRUCIBLE_SHOP.Deny"}}
+            </button>
+            <button type="button" class="approve" data-action="approveRequest">
+              <i class="fa-solid fa-check"></i> {{localize "CRUCIBLE_SHOP.Approve"}}
+            </button>
+          </div>
+        </li>
+        {{/each}}
+      </ol>
+      {{/if}}
+    </div>
+    {{/if}}
 
     {{/if}}
   </section>

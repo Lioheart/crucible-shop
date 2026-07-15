@@ -1,4 +1,11 @@
-<div class="shop-app-layout">
+<div class="shop-app-layout {{#if pendingRequest}}awaiting-approval{{/if}}">
+
+  {{#if pendingRequest}}
+  <div class="shop-approval-overlay">
+    <i class="fa-solid fa-hourglass-half"></i>
+    <p>{{localize "CRUCIBLE_SHOP.AwaitingApproval"}}</p>
+  </div>
+  {{/if}}
 
   <header class="shop-header">
     <div class="shop-search-wrapper">
@@ -28,6 +35,7 @@
   </nav>
 
   {{#if buyTabActive}}
+  <p class="hint sell-rate-hint">{{localize "CRUCIBLE_SHOP.BuyRateNotice" buyRate=buyRate}}</p>
   <nav class="shop-filters">
     <a class="filter-type {{#unless filterType}}active{{/unless}}" data-action="filterType">
       {{localize "CRUCIBLE_SHOP.AllTypes"}}

@@ -1,4 +1,4 @@
-import {MODULE_ID, restockCustomShop} from "./crucible-shop.mjs";
+import {MODULE_ID, applyPurchase, applySell, requestTransactionApproval} from "./crucible-shop.mjs";
 
 const {ApplicationV2, HandlebarsApplicationMixin} = foundry.applications.api;
 
@@ -79,11 +79,12 @@ export class CrucibleShopApp extends HandlebarsApplicationMixin(ApplicationV2) {
    *   cart: Record<string, {item: Item, price: number, quantity: number}>,
    *   filter: {type: string|null, category: string|null, affordableOnly: boolean},
    *   activeTab: "buy"|"sell",
-   *   sellCart: Record<string, {item: Item, unitPrice: number, quantity: number}>
+   *   sellCart: Record<string, {item: Item, unitPrice: number, quantity: number}>,
+   *   pendingRequest: {id: string, kind: "buy"|"sell"}|null
    * }}
    */
   _state = {items: [], categoriesByType: {}, cart: {}, filter: {type: null, category: null, affordableOnly: false},
-    activeTab: "buy", sellCart: {}};
+    activeTab: "buy", sellCart: {}, pendingRequest: null};
 
   /* -------------------------------------------- */
 
@@ -105,6 +106,8 @@ export class CrucibleShopApp extends HandlebarsApplicationMixin(ApplicationV2) {
     const items = (this.shop.mode === "custom")
       ? await this.#loadCustomItems()
       : await this.#loadDefaultItems();
+    const buyRate = this.shop.buyRate ?? 100;
+    for ( const entry of items ) entry.price = CrucibleShopApp.applyRate(entry.price, buyRate);
     items.sort((a, b) => a.item.name.localeCompare(b.item.name));
     this._state.items = items;
 
@@ -186,6 +189,7 @@ export class CrucibleShopApp extends HandlebarsApplicationMixin(ApplicationV2) {
     const currency = this.actor.system.currency ?? 0;
     const cart = this._state.cart;
     const {type: filterType, category: filterCategory, affordableOnly} = this._state.filter;
+    const buyRate = this.shop.buyRate ?? 100;
 
     let cartSpent = 0;
     for ( const {price, quantity} of Object.values(cart) ) cartSpent += price * quantity;
@@ -254,10 +258,10 @@ export class CrucibleShopApp extends HandlebarsApplicationMixin(ApplicationV2) {
       unaffordable: price > remaining
     }));
 
-    const sellRate = this.shop.sellRate ?? 50;
+    const sellRate = this.shop.sellRate ?? 100;
     const sellCart = this._state.sellCart;
     const sellItems = this.#getSellableItems().map(item => {
-      const unitPrice = Math.round((item.system.price ?? 0) * (sellRate / 100));
+      const unitPrice = CrucibleShopApp.applyRate(item.system.price ?? 0, sellRate);
       const owned = item.system.quantity ?? 1;
       const staged = sellCart[item.id]?.quantity ?? 0;
       return {
@@ -301,13 +305,15 @@ export class CrucibleShopApp extends HandlebarsApplicationMixin(ApplicationV2) {
       activeTab: this._state.activeTab,
       buyTabActive: this._state.activeTab === "buy",
       sellTabActive: this._state.activeTab === "sell",
+      buyRate,
       sellRate,
       sellItems,
       noSellItems: !sellItems.length,
       sellCartItems,
       sellCartEmpty: !sellCartItems.length,
       sellEarned,
-      sellEarnedFormatted: CrucibleShopApp.formatCurrency(sellEarned)
+      sellEarnedFormatted: CrucibleShopApp.formatCurrency(sellEarned),
+      pendingRequest: this._state.pendingRequest
     };
   }
 
@@ -341,6 +347,20 @@ export class CrucibleShopApp extends HandlebarsApplicationMixin(ApplicationV2) {
   _tearDown(options) {
     this.#search.unbind();
     super._tearDown(options);
+  }
+
+  /* -------------------------------------------- */
+
+  /**
+   * Scale a base price by a shop's rate - a plain percentage of the item's listed value, e.g. 80
+   * for "80% of value" or 120 for "120% of value". Used for both buy prices and sell payouts,
+   * each shop having its own independent buyRate and sellRate.
+   * @param {number} basePrice
+   * @param {number} rate   A percentage of value, e.g. 100 for full price.
+   * @returns {number}
+   */
+  static applyRate(basePrice, rate) {
+    return Math.max(0, Math.round(basePrice * (rate / 100)));
   }
 
   /* -------------------------------------------- */
@@ -468,8 +488,8 @@ export class CrucibleShopApp extends HandlebarsApplicationMixin(ApplicationV2) {
     const staged = sellCart[id]?.quantity ?? 0;
     if ( staged >= owned ) return;
 
-    const sellRate = this.shop.sellRate ?? 50;
-    const unitPrice = Math.round((item.system.price ?? 0) * (sellRate / 100));
+    const sellRate = this.shop.sellRate ?? 100;
+    const unitPrice = CrucibleShopApp.applyRate(item.system.price ?? 0, sellRate);
 
     if ( id in sellCart ) sellCart[id].quantity++;
     else sellCart[id] = {item, unitPrice, quantity: 1};
@@ -505,40 +525,28 @@ export class CrucibleShopApp extends HandlebarsApplicationMixin(ApplicationV2) {
    * "no sockets required" pattern the chat invite button already uses) which restocks on arrival.
    */
   static async #onConfirmSell() {
-    const staged = Object.values(this._state.sellCart);
+    const staged = Object.values(this._state.sellCart).filter(s => s.quantity > 0);
     if ( !staged.length ) {
       ui.notifications.warn(game.i18n.localize("CRUCIBLE_SHOP.SellNone"));
       return;
     }
 
-    const earned = staged.reduce((sum, {unitPrice, quantity}) => sum + (unitPrice * quantity), 0);
-    const currency = this.actor.system.currency ?? 0;
+    const entries = staged.map(({item, unitPrice, quantity}) => (
+      {itemId: item.id, name: item.name, img: item.img, unitPrice, quantity}));
+    const earned = entries.reduce((sum, {unitPrice, quantity}) => sum + (unitPrice * quantity), 0);
 
-    const toDelete = [];
-    const toUpdate = [];
-    let count = 0;
-    const restock = [];
-    for ( const {item, unitPrice, quantity} of staged ) {
-      if ( quantity <= 0 ) continue;
-      count += quantity;
-      restock.push({itemData: item.toObject(), unitPrice});
-
-      const owned = item.system.quantity ?? 1;
-      if ( (item.system.quantity != null) && (quantity < owned) ) {
-        toUpdate.push({_id: item.id, "system.quantity": owned - quantity});
-      }
-      else {
-        toDelete.push(item.id);
-      }
+    if ( this.shop.requireApproval ) {
+      const request = await requestTransactionApproval(
+        {kind: "sell", shop: this.shop, actor: this.actor, entries, total: earned});
+      if ( !request ) return; // No GM online - a warning was already shown.
+      this._state.pendingRequest = {id: request.requestId, kind: "sell"};
+      await this.render({parts: ["shop"]});
+      return;
     }
 
-    await this.actor.update({"system.currency": currency + earned});
-    if ( toUpdate.length ) await this.actor.updateEmbeddedDocuments("Item", toUpdate);
-    if ( toDelete.length ) await this.actor.deleteEmbeddedDocuments("Item", toDelete);
-
-    if ( this.shop.mode === "custom" ) await restockCustomShop(this.shop.id, restock);
-
-    ui.notifications.info(game.i18n.format("CRUCIBLE_SHOP.SellSuccess", {count, earned: CrucibleShopApp.formatCurrency(earned)}));
+    const result = await applySell(this.actor, this.shop, entries);
+    ui.notifications.info(game.i18n.format(
+      "CRUCIBLE_SHOP.SellSuccess", {count: result.count, earned: CrucibleShopApp.formatCurrency(result.earned)}));
     this._state.sellCart = {};
     await this.render({parts: ["shop"]});
   }
@@ -550,55 +558,72 @@ export class CrucibleShopApp extends HandlebarsApplicationMixin(ApplicationV2) {
    * actor changes until this runs.
    */
   static async #onConfirmPurchase() {
-    const cart = Object.values(this._state.cart);
+    const cart = Object.values(this._state.cart).filter(c => c.quantity > 0);
     if ( !cart.length ) {
       ui.notifications.warn(game.i18n.localize("CRUCIBLE_SHOP.PurchaseNone"));
       return;
     }
 
-    const spent = cart.reduce((sum, {price, quantity}) => sum + (price * quantity), 0);
+    const entries = cart.map(({item, price, quantity}) => (
+      {uuid: item.uuid, name: item.name, img: item.img, price, quantity}));
+    const spent = entries.reduce((sum, {price, quantity}) => sum + (price * quantity), 0);
     const currency = this.actor.system.currency ?? 0;
     if ( spent > currency ) {
       ui.notifications.error(game.i18n.localize("CRUCIBLE_SHOP.PurchaseFailed"));
       return;
     }
 
-    const toCreate = [];
-    const toUpdate = [];
-    let count = 0;
-    for ( const {item, quantity} of cart ) {
-      if ( quantity <= 0 ) continue;
-      count += quantity;
-      const isStackable = item.system.properties?.has?.("stackable");
-
-      if ( isStackable ) {
-        const existing = this.actor.items.find(i => i.getFlag(MODULE_ID, "sourceUuid") === item.uuid);
-        if ( existing ) {
-          toUpdate.push({_id: existing.id, "system.quantity": existing.system.quantity + quantity});
-          continue;
-        }
-        const itemData = game.items.fromCompendium?.(item) ?? item.toObject();
-        delete itemData._id;
-        foundry.utils.setProperty(itemData, "system.quantity", quantity);
-        foundry.utils.setProperty(itemData, `flags.${MODULE_ID}.sourceUuid`, item.uuid);
-        toCreate.push(itemData);
-      }
-      else {
-        for ( let i = 0; i < quantity; i++ ) {
-          const itemData = item.toObject();
-          delete itemData._id;
-          foundry.utils.setProperty(itemData, `flags.${MODULE_ID}.sourceUuid`, item.uuid);
-          toCreate.push(itemData);
-        }
-      }
+    if ( this.shop.requireApproval ) {
+      const request = await requestTransactionApproval(
+        {kind: "buy", shop: this.shop, actor: this.actor, entries, total: spent});
+      if ( !request ) return; // No GM online - a warning was already shown.
+      this._state.pendingRequest = {id: request.requestId, kind: "buy"};
+      await this.render({parts: ["shop"]});
+      return;
     }
 
-    await this.actor.update({"system.currency": currency - spent});
-    if ( toCreate.length ) await this.actor.createEmbeddedDocuments("Item", toCreate);
-    if ( toUpdate.length ) await this.actor.updateEmbeddedDocuments("Item", toUpdate);
+    const result = await applyPurchase(this.actor, entries);
+    if ( result?.failed ) {
+      ui.notifications.error(game.i18n.localize("CRUCIBLE_SHOP.PurchaseFailed"));
+      return;
+    }
 
-    ui.notifications.info(game.i18n.format("CRUCIBLE_SHOP.PurchaseSuccess", {count, spent: CrucibleShopApp.formatCurrency(spent)}));
+    ui.notifications.info(game.i18n.format(
+      "CRUCIBLE_SHOP.PurchaseSuccess", {count: result.count, spent: CrucibleShopApp.formatCurrency(result.spent)}));
     this._state.cart = {};
     await this.render({parts: ["shop"]});
+  }
+
+  /* -------------------------------------------- */
+
+  /**
+   * Called when a GM resolves a pending transaction this app is waiting on (approved, denied, or
+   * failed at approval time e.g. insufficient funds). Reached via the module's updateChatMessage
+   * hook, not called directly by any UI action.
+   * @param {object} request   The resolved transactionRequest flag data.
+   */
+  resolvePendingTransaction(request) {
+    this._state.pendingRequest = null;
+
+    if ( request.status === "approved" ) {
+      if ( request.kind === "buy" ) {
+        this._state.cart = {};
+        ui.notifications.info(game.i18n.format("CRUCIBLE_SHOP.PurchaseSuccess",
+          {count: request.result?.count ?? 0, spent: CrucibleShopApp.formatCurrency(request.result?.spent ?? 0)}));
+      }
+      else {
+        this._state.sellCart = {};
+        ui.notifications.info(game.i18n.format("CRUCIBLE_SHOP.SellSuccess",
+          {count: request.result?.count ?? 0, earned: CrucibleShopApp.formatCurrency(request.result?.earned ?? 0)}));
+      }
+    }
+    else if ( request.status === "denied" ) {
+      ui.notifications.warn(game.i18n.localize("CRUCIBLE_SHOP.RequestDenied"));
+    }
+    else {
+      ui.notifications.error(game.i18n.localize("CRUCIBLE_SHOP.RequestFailed"));
+    }
+
+    this.render({parts: ["shop"]});
   }
 }

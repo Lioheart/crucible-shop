@@ -1,4 +1,6 @@
-import {MODULE_ID, getShops, saveShop, deleteShop, inviteToShop, openShop} from "./crucible-shop.mjs";
+import {MODULE_ID, getShops, saveShop, deleteShop, inviteToShop, openShop, getPendingTransactionRequests,
+  resolveTransactionRequest} from "./crucible-shop.mjs";
+import {CrucibleShopApp} from "./shop-app.mjs";
 
 const {ApplicationV2, HandlebarsApplicationMixin} = foundry.applications.api;
 
@@ -71,7 +73,11 @@ export class CrucibleShopManagerApp extends HandlebarsApplicationMixin(Applicati
       selected = shopList[0] ?? null;
       if ( selected ) this._state.selectedShopId = selected.id;
     }
-    if ( selected ) selected.sellRate ??= 50;
+    if ( selected ) {
+      selected.buyRate ??= 100;
+      selected.sellRate ??= 100;
+      selected.requireApproval ??= false;
+    }
 
     let items = [];
     if ( selected?.mode === "custom" ) {
@@ -85,13 +91,38 @@ export class CrucibleShopManagerApp extends HandlebarsApplicationMixin(Applicati
 
     const users = game.users.filter(u => !u.isGM).map(u => ({id: u.id, name: u.name, active: u.active}));
 
+    const approvalMethod = game.settings.get(MODULE_ID, "approvalMethod");
+    const showPendingPanel = (approvalMethod === "panel") || (approvalMethod === "both");
+    const pendingRequests = (selected && showPendingPanel)
+      ? getPendingTransactionRequests(selected.id).map(({messageId, request}) => {
+        const isBuy = request.kind === "buy";
+        return {
+          messageId,
+          kind: request.kind,
+          isBuy,
+          userName: request.userName,
+          actorName: request.actorName,
+          total: CrucibleShopApp.formatCurrency(request.total),
+          entries: request.entries.map(e => ({
+            name: e.name,
+            img: e.img,
+            quantity: e.quantity,
+            unitPrice: isBuy ? e.price : e.unitPrice
+          }))
+        };
+      })
+      : [];
+
     return {
       shops: shopList.map(s => ({...s, active: s.id === this._state.selectedShopId})),
       selected,
       isDefaultShop: selected?.id === "default",
       items,
       users,
-      noUsers: !users.length
+      noUsers: !users.length,
+      showPendingPanel,
+      pendingRequests,
+      noPendingRequests: showPendingPanel && !pendingRequests.length
     };
   }
 
@@ -113,11 +144,20 @@ export class CrucibleShopManagerApp extends HandlebarsApplicationMixin(Applicati
     const modeSelect = this.element.querySelector(".shop-mode-select");
     modeSelect?.addEventListener("change", this.#onChangeMode.bind(this));
 
+    const buyRateInput = this.element.querySelector(".shop-buy-rate-input");
+    buyRateInput?.addEventListener("change", this.#onChangeBuyRate.bind(this));
+
     const sellRateInput = this.element.querySelector(".shop-sell-rate-input");
     sellRateInput?.addEventListener("change", this.#onChangeSellRate.bind(this));
 
+    const approvalCheckbox = this.element.querySelector(".shop-require-approval-input");
+    approvalCheckbox?.addEventListener("change", this.#onChangeRequireApproval.bind(this));
+
     const itemList = this.element.querySelector(".shop-manager-item-list");
     itemList?.addEventListener("change", this.#onChangePrice.bind(this));
+
+    const pendingList = this.element.querySelector(".pending-requests-list");
+    pendingList?.addEventListener("click", this.#onClickPendingRequest.bind(this));
   }
 
   /* -------------------------------------------- */
@@ -184,13 +224,70 @@ export class CrucibleShopManagerApp extends HandlebarsApplicationMixin(Applicati
    * this shop.
    * @param {Event} event
    */
+  /**
+   * Handle the GM editing this shop's buy rate - the percentage of an item's listed price
+   * players pay to buy it here (e.g. 80 for "80% of value").
+   * @param {Event} event
+   */
+  async #onChangeBuyRate(event) {
+    const shops = getShops();
+    const shop = shops[this._state.selectedShopId];
+    if ( !shop ) return;
+    const raw = Number(event.target.value ?? 100);
+    shop.buyRate = Number.isFinite(raw) ? Math.max(0, Math.round(raw)) : 100;
+    await saveShop(shop);
+    await this.render({parts: ["manager"]});
+  }
+
+  /* -------------------------------------------- */
+
+  /**
+   * Handle the GM editing this shop's sell rate - the percentage of an item's listed price
+   * players are paid when selling it here (e.g. 120 for "120% of value").
+   * @param {Event} event
+   */
   async #onChangeSellRate(event) {
     const shops = getShops();
     const shop = shops[this._state.selectedShopId];
     if ( !shop ) return;
-    const raw = Number(event.target.value ?? 50);
-    shop.sellRate = Number.isFinite(raw) ? Math.max(0, Math.round(raw)) : 50;
+    const raw = Number(event.target.value ?? 100);
+    shop.sellRate = Number.isFinite(raw) ? Math.max(0, Math.round(raw)) : 100;
     await saveShop(shop);
+    await this.render({parts: ["manager"]});
+  }
+
+  /* -------------------------------------------- */
+
+  /**
+   * Handle the GM toggling whether this shop's transactions need explicit GM approval before
+   * they apply, rather than resolving instantly on the player's client.
+   * @param {Event} event
+   */
+  async #onChangeRequireApproval(event) {
+    const shops = getShops();
+    const shop = shops[this._state.selectedShopId];
+    if ( !shop ) return;
+    shop.requireApproval = event.target.checked;
+    await saveShop(shop);
+    await this.render({parts: ["manager"]});
+  }
+
+  /* -------------------------------------------- */
+
+  /**
+   * Handle a click on an Approve or Deny button in the Pending Requests panel. Delegates to the
+   * same resolveTransactionRequest used by the chat card buttons, so a request can be resolved
+   * from either place interchangeably.
+   * @param {PointerEvent} event
+   */
+  async #onClickPendingRequest(event) {
+    const button = event.target.closest("[data-action]");
+    if ( !button ) return;
+    const action = button.dataset.action;
+    if ( (action !== "approveRequest") && (action !== "denyRequest") ) return;
+    const messageId = button.closest("[data-message-id]")?.dataset.messageId;
+    if ( !messageId ) return;
+    await resolveTransactionRequest(messageId, action === "approveRequest" ? "approved" : "denied");
     await this.render({parts: ["manager"]});
   }
 
@@ -223,7 +320,7 @@ export class CrucibleShopManagerApp extends HandlebarsApplicationMixin(Applicati
 
   static async #onCreateShop() {
     const id = foundry.utils.randomID();
-    const shop = {id, name: game.i18n.localize("CRUCIBLE_SHOP.NewShop"), mode: "custom", itemUuids: [], sellRate: 50};
+    const shop = {id, name: game.i18n.localize("CRUCIBLE_SHOP.NewShop"), mode: "custom", itemUuids: [], buyRate: 100, sellRate: 100, requireApproval: false};
     await saveShop(shop);
     this._state.selectedShopId = id;
     await this.render({parts: ["manager"]});

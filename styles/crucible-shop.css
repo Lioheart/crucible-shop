@@ -18,6 +18,72 @@
   height: 100%;
   padding: 0.5rem;
   gap: 0.5rem;
+  position: relative;
+}
+
+.crucible-shop .shop-app-layout.awaiting-approval .shop-header,
+.crucible-shop .shop-app-layout.awaiting-approval .shop-tabs,
+.crucible-shop .shop-app-layout.awaiting-approval .shop-body {
+  opacity: 0.35;
+  filter: grayscale(0.4);
+}
+
+.crucible-shop .shop-approval-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  background: rgba(0, 0, 0, 0.15);
+  text-align: center;
+  font-size: 1.1rem;
+}
+
+.crucible-shop .shop-approval-overlay i {
+  font-size: 2rem;
+  opacity: 0.8;
+}
+
+/* Whispered chat card for a pending buy/sell request awaiting GM approval. */
+.crucible-shop-transaction {
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 4px;
+  padding: 0.5rem;
+}
+
+.crucible-shop-transaction .transaction-items {
+  margin: 0.25rem 0;
+  padding-left: 1.25rem;
+}
+
+.crucible-shop-transaction .transaction-total {
+  font-weight: bold;
+}
+
+.crucible-shop-transaction .transaction-actions {
+  display: flex;
+  gap: 0.5rem;
+  justify-content: flex-end;
+}
+
+.crucible-shop-transaction .transaction-actions .approve {
+  color: #6fcf6f;
+}
+
+.crucible-shop-transaction .transaction-actions .deny {
+  color: #e07a7a;
+}
+
+.crucible-shop-transaction.status-approved .transaction-status.approved {
+  color: #6fcf6f;
+}
+
+.crucible-shop-transaction.status-denied .transaction-status.denied,
+.crucible-shop-transaction.status-failed .transaction-status.failed {
+  color: #e07a7a;
 }
 
 .crucible-shop .shop-header {
@@ -357,6 +423,17 @@
   gap: 0.15rem;
 }
 
+.crucible-shop-manager .shop-detail-header .form-group-checkbox {
+  flex: 0 0 auto;
+  flex-direction: row;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.crucible-shop-manager .shop-detail-header .form-group-checkbox input {
+  width: auto;
+}
+
 .crucible-shop-manager .shop-item-drop {
   border: 1px dashed rgba(255, 255, 255, 0.25);
   border-radius: 4px;
@@ -366,6 +443,53 @@
   display: flex;
   flex-direction: column;
   overflow: hidden;
+}
+
+.crucible-shop-manager .pending-requests-panel {
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  padding-top: 0.5rem;
+}
+
+.crucible-shop-manager .pending-requests-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.crucible-shop-manager .pending-request-entry {
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 4px;
+  padding: 0.4rem 0.5rem;
+}
+
+.crucible-shop-manager .pending-request-summary {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-weight: bold;
+}
+
+.crucible-shop-manager .pending-request-items {
+  margin: 0.25rem 0;
+  padding-left: 1.25rem;
+  opacity: 0.85;
+  font-size: 0.9em;
+}
+
+.crucible-shop-manager .pending-request-actions {
+  display: flex;
+  gap: 0.5rem;
+  justify-content: flex-end;
+}
+
+.crucible-shop-manager .pending-request-actions .approve {
+  color: #6fcf6f;
+}
+
+.crucible-shop-manager .pending-request-actions .deny {
+  color: #e07a7a;
 }
 
 .crucible-shop-manager .shop-item-drop-toolbar {
