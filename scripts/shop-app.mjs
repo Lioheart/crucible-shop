@@ -1,4 +1,4 @@
-import {MODULE_ID} from "./crucible-shop.mjs";
+import {MODULE_ID, restockCustomShop} from "./crucible-shop.mjs";
 
 const {ApplicationV2, HandlebarsApplicationMixin} = foundry.applications.api;
 
@@ -37,7 +37,12 @@ export class CrucibleShopApp extends HandlebarsApplicationMixin(ApplicationV2) {
       filterCategory: CrucibleShopApp.#onFilterCategory,
       filterAffordable: CrucibleShopApp.#onFilterAffordable,
       confirmPurchase: CrucibleShopApp.#onConfirmPurchase,
-      clearCart: CrucibleShopApp.#onClearCart
+      clearCart: CrucibleShopApp.#onClearCart,
+      switchTab: CrucibleShopApp.#onSwitchTab,
+      sellAdd: CrucibleShopApp.#onSellAdd,
+      sellRemove: CrucibleShopApp.#onSellRemove,
+      clearSellCart: CrucibleShopApp.#onClearSellCart,
+      confirmSell: CrucibleShopApp.#onConfirmSell
     }
   };
 
@@ -46,7 +51,7 @@ export class CrucibleShopApp extends HandlebarsApplicationMixin(ApplicationV2) {
     shop: {
       id: "shop",
       template: "modules/crucible-shop/templates/shop.hbs",
-      scrollable: [".shop-list", ".shop-cart"]
+      scrollable: [".shop-list", ".shop-cart", ".sell-list", ".sell-cart"]
     }
   };
 
@@ -72,10 +77,13 @@ export class CrucibleShopApp extends HandlebarsApplicationMixin(ApplicationV2) {
    *   items: {item: Item, price: number}[],
    *   categoriesByType: Record<string, Record<string, string>>,
    *   cart: Record<string, {item: Item, price: number, quantity: number}>,
-   *   filter: {type: string|null, category: string|null, affordableOnly: boolean}
+   *   filter: {type: string|null, category: string|null, affordableOnly: boolean},
+   *   activeTab: "buy"|"sell",
+   *   sellCart: Record<string, {item: Item, unitPrice: number, quantity: number}>
    * }}
    */
-  _state = {items: [], categoriesByType: {}, cart: {}, filter: {type: null, category: null, affordableOnly: false}};
+  _state = {items: [], categoriesByType: {}, cart: {}, filter: {type: null, category: null, affordableOnly: false},
+    activeTab: "buy", sellCart: {}};
 
   /* -------------------------------------------- */
 
@@ -246,6 +254,34 @@ export class CrucibleShopApp extends HandlebarsApplicationMixin(ApplicationV2) {
       unaffordable: price > remaining
     }));
 
+    const sellRate = this.shop.sellRate ?? 50;
+    const sellCart = this._state.sellCart;
+    const sellItems = this.#getSellableItems().map(item => {
+      const unitPrice = Math.round((item.system.price ?? 0) * (sellRate / 100));
+      const owned = item.system.quantity ?? 1;
+      const staged = sellCart[item.id]?.quantity ?? 0;
+      return {
+        id: item.id,
+        name: item.name,
+        img: item.img,
+        unitPrice,
+        owned,
+        staged,
+        maxed: staged >= owned
+      };
+    });
+
+    let sellEarned = 0;
+    for ( const {unitPrice, quantity} of Object.values(sellCart) ) sellEarned += unitPrice * quantity;
+    const sellCartItems = Object.values(sellCart).map(({item, unitPrice, quantity}) => ({
+      id: item.id,
+      name: item.name,
+      img: item.img,
+      quantity,
+      unitPrice,
+      totalValue: unitPrice * quantity
+    }));
+
     return {
       shop: this.shop,
       actor: this.actor,
@@ -261,8 +297,30 @@ export class CrucibleShopApp extends HandlebarsApplicationMixin(ApplicationV2) {
       cartItems,
       cartEmpty: !cartItems.length,
       noItems: !this._state.items.length,
-      noAffordableItems: affordableOnly && !shopItems.length && !!this._state.items.length
+      noAffordableItems: affordableOnly && !shopItems.length && !!this._state.items.length,
+      activeTab: this._state.activeTab,
+      buyTabActive: this._state.activeTab === "buy",
+      sellTabActive: this._state.activeTab === "sell",
+      sellRate,
+      sellItems,
+      noSellItems: !sellItems.length,
+      sellCartItems,
+      sellCartEmpty: !sellCartItems.length,
+      sellEarned,
+      sellEarnedFormatted: CrucibleShopApp.formatCurrency(sellEarned)
     };
+  }
+
+  /* -------------------------------------------- */
+
+  /**
+   * The actor's own inventory items that this shop will buy - anything with a price greater
+   * than zero. This intentionally does not distinguish where the item came from (bought here,
+   * looted, homebrewed, etc.) - if it has a price, it can be sold.
+   * @returns {Item[]}
+   */
+  #getSellableItems() {
+    return this.actor.items.filter(item => (item.system?.price ?? 0) > 0);
   }
 
   /* -------------------------------------------- */
@@ -388,6 +446,100 @@ export class CrucibleShopApp extends HandlebarsApplicationMixin(ApplicationV2) {
     const raw = Number(event.target.value ?? 0);
     const amount = Number.isFinite(raw) ? Math.max(0, Math.round(raw)) : 0;
     await this.actor.update({"system.currency": amount});
+    await this.render({parts: ["shop"]});
+  }
+
+  /* -------------------------------------------- */
+
+  static async #onSwitchTab(_event, target) {
+    this._state.activeTab = target.dataset.tab === "sell" ? "sell" : "buy";
+    await this.render({parts: ["shop"]});
+  }
+
+  /* -------------------------------------------- */
+
+  static async #onSellAdd(_event, target) {
+    const id = target.closest("[data-item-id]").dataset.itemId;
+    const item = this.actor.items.get(id);
+    if ( !item ) return;
+
+    const sellCart = this._state.sellCart;
+    const owned = item.system.quantity ?? 1;
+    const staged = sellCart[id]?.quantity ?? 0;
+    if ( staged >= owned ) return;
+
+    const sellRate = this.shop.sellRate ?? 50;
+    const unitPrice = Math.round((item.system.price ?? 0) * (sellRate / 100));
+
+    if ( id in sellCart ) sellCart[id].quantity++;
+    else sellCart[id] = {item, unitPrice, quantity: 1};
+    await this.render({parts: ["shop"]});
+  }
+
+  /* -------------------------------------------- */
+
+  static async #onSellRemove(_event, target) {
+    const id = target.closest("[data-item-id]").dataset.itemId;
+    const sellCart = this._state.sellCart;
+    if ( !(id in sellCart) ) return;
+    sellCart[id].quantity--;
+    if ( sellCart[id].quantity <= 0 ) delete sellCart[id];
+    await this.render({parts: ["shop"]});
+  }
+
+  /* -------------------------------------------- */
+
+  static async #onClearSellCart() {
+    this._state.sellCart = {};
+    await this.render({parts: ["shop"]});
+  }
+
+  /* -------------------------------------------- */
+
+  /**
+   * Apply the sell cart to the actor: pay out currency and remove/decrement the sold items.
+   * If this shop is a "custom" shop, the sold items are also restocked into the shop's own item
+   * list so other players can buy them back. GMs can restock immediately since they're allowed to
+   * write the world-scoped shop setting directly; non-GM sellers cannot write that setting, so
+   * their sale is instead handed off to a GM client via a quiet whispered chat message (the same
+   * "no sockets required" pattern the chat invite button already uses) which restocks on arrival.
+   */
+  static async #onConfirmSell() {
+    const staged = Object.values(this._state.sellCart);
+    if ( !staged.length ) {
+      ui.notifications.warn(game.i18n.localize("CRUCIBLE_SHOP.SellNone"));
+      return;
+    }
+
+    const earned = staged.reduce((sum, {unitPrice, quantity}) => sum + (unitPrice * quantity), 0);
+    const currency = this.actor.system.currency ?? 0;
+
+    const toDelete = [];
+    const toUpdate = [];
+    let count = 0;
+    const restock = [];
+    for ( const {item, unitPrice, quantity} of staged ) {
+      if ( quantity <= 0 ) continue;
+      count += quantity;
+      restock.push({itemData: item.toObject(), unitPrice});
+
+      const owned = item.system.quantity ?? 1;
+      if ( (item.system.quantity != null) && (quantity < owned) ) {
+        toUpdate.push({_id: item.id, "system.quantity": owned - quantity});
+      }
+      else {
+        toDelete.push(item.id);
+      }
+    }
+
+    await this.actor.update({"system.currency": currency + earned});
+    if ( toUpdate.length ) await this.actor.updateEmbeddedDocuments("Item", toUpdate);
+    if ( toDelete.length ) await this.actor.deleteEmbeddedDocuments("Item", toDelete);
+
+    if ( this.shop.mode === "custom" ) await restockCustomShop(this.shop.id, restock);
+
+    ui.notifications.info(game.i18n.format("CRUCIBLE_SHOP.SellSuccess", {count, earned: CrucibleShopApp.formatCurrency(earned)}));
+    this._state.sellCart = {};
     await this.render({parts: ["shop"]});
   }
 

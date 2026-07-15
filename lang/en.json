@@ -51,6 +51,19 @@
     "PriceUpdated": "Updated the price of {name}.",
     "RandomizeItems": "Generate Items",
     "RandomizeUnavailable": "This version of Crucible does not expose an item randomizer.",
-    "RandomizeSuccess": "Added {count} generated item(s) to the shop."
+    "RandomizeSuccess": "Added {count} generated item(s) to the shop.",
+
+    "BuyTab": "Buy",
+    "SellTab": "Sell",
+    "SellRate": "Sell Rate (%)",
+    "SellRateHint": "The percentage of an item's price a player receives when selling it to this shop.",
+    "SellRateNotice": "This shop pays {sellRate}% of an item's price.",
+    "NoSellableItems": "You have nothing this shop will buy.",
+    "SellCart": "Selling",
+    "SellCartEmpty": "Nothing staged to sell.",
+    "ConfirmSell": "Confirm Sale",
+    "SellNone": "You haven't selected anything to sell.",
+    "SellSuccess": "Sold {count} item(s) for {earned}.",
+    "SellRestockNotice": "{name} sold an item to a shop - restocking now that a GM has picked this up."
   }
 }

@@ -71,6 +71,7 @@ export class CrucibleShopManagerApp extends HandlebarsApplicationMixin(Applicati
       selected = shopList[0] ?? null;
       if ( selected ) this._state.selectedShopId = selected.id;
     }
+    if ( selected ) selected.sellRate ??= 50;
 
     let items = [];
     if ( selected?.mode === "custom" ) {
@@ -111,6 +112,9 @@ export class CrucibleShopManagerApp extends HandlebarsApplicationMixin(Applicati
 
     const modeSelect = this.element.querySelector(".shop-mode-select");
     modeSelect?.addEventListener("change", this.#onChangeMode.bind(this));
+
+    const sellRateInput = this.element.querySelector(".shop-sell-rate-input");
+    sellRateInput?.addEventListener("change", this.#onChangeSellRate.bind(this));
 
     const itemList = this.element.querySelector(".shop-manager-item-list");
     itemList?.addEventListener("change", this.#onChangePrice.bind(this));
@@ -176,6 +180,23 @@ export class CrucibleShopManagerApp extends HandlebarsApplicationMixin(Applicati
   /* -------------------------------------------- */
 
   /**
+   * Handle the GM editing the percentage of an item's price players receive when selling to
+   * this shop.
+   * @param {Event} event
+   */
+  async #onChangeSellRate(event) {
+    const shops = getShops();
+    const shop = shops[this._state.selectedShopId];
+    if ( !shop ) return;
+    const raw = Number(event.target.value ?? 50);
+    shop.sellRate = Number.isFinite(raw) ? Math.max(0, Math.round(raw)) : 50;
+    await saveShop(shop);
+    await this.render({parts: ["manager"]});
+  }
+
+  /* -------------------------------------------- */
+
+  /**
    * Handle the GM editing a custom shop item's price. This override always takes precedence over
    * the item's own price, which is how items with no price of their own (or a stale/missing one)
    * can still be sold in a custom shop.
@@ -202,7 +223,7 @@ export class CrucibleShopManagerApp extends HandlebarsApplicationMixin(Applicati
 
   static async #onCreateShop() {
     const id = foundry.utils.randomID();
-    const shop = {id, name: game.i18n.localize("CRUCIBLE_SHOP.NewShop"), mode: "custom", itemUuids: []};
+    const shop = {id, name: game.i18n.localize("CRUCIBLE_SHOP.NewShop"), mode: "custom", itemUuids: [], sellRate: 50};
     await saveShop(shop);
     this._state.selectedShopId = id;
     await this.render({parts: ["manager"]});

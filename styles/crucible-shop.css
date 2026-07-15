@@ -67,6 +67,39 @@
   color: #fff;
 }
 
+.crucible-shop .shop-tabs {
+  display: flex;
+  gap: 0.5rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.crucible-shop .shop-tab {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.3rem 0.75rem;
+  cursor: pointer;
+  opacity: 0.6;
+  border-bottom: 2px solid transparent;
+}
+
+.crucible-shop .shop-tab.active {
+  opacity: 1;
+  color: var(--color-text-light-highlight, #f0d0a0);
+  border-bottom-color: var(--color-text-light-highlight, #a3612d);
+}
+
+.crucible-shop .sell-rate-hint {
+  opacity: 0.7;
+  font-style: italic;
+  margin: 0;
+}
+
+.crucible-shop .item-controls .add.disabled {
+  opacity: 0.35;
+  pointer-events: none;
+}
+
 .crucible-shop .shop-filters {
   display: flex;
   flex-wrap: wrap;

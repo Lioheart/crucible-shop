@@ -35,6 +35,10 @@
           <option value="custom" {{#if (eq selected.mode "custom")}}selected{{/if}}>{{localize "CRUCIBLE_SHOP.ModeCustom"}}</option>
         </select>
       </div>
+      <div class="form-group">
+        <label data-tooltip="{{localize 'CRUCIBLE_SHOP.SellRateHint'}}">{{localize "CRUCIBLE_SHOP.SellRate"}}</label>
+        <input type="number" class="shop-sell-rate-input" min="0" max="200" step="5" value="{{selected.sellRate}}"/>
+      </div>
       <button type="button" class="preview-shop" data-action="openShop">
         <i class="fa-solid fa-eye"></i> {{localize "CRUCIBLE_SHOP.Preview"}}
       </button>

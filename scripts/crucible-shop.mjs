@@ -27,7 +27,7 @@ import {CrucibleShopManagerApp} from "./shop-manager-app.mjs";
 export const MODULE_ID = "crucible-shop";
 
 /** @type {{id: string, name: string, mode: "default"|"custom", itemUuids: string[]}} */
-const DEFAULT_SHOP = {id: "default", name: "General Store", mode: "default", itemUuids: []};
+const DEFAULT_SHOP = {id: "default", name: "General Store", mode: "default", itemUuids: [], sellRate: 50};
 
 /* -------------------------------------------- */
 /*  Initialization                               */
@@ -61,6 +61,16 @@ Hooks.once("ready", () => {
   Hooks.on("renderChatMessageHTML", (message, html) => bindChatButtons(html));
   Hooks.on("renderChatMessage", (message, html) => bindChatButtons(html[0] ?? html));
 
+  // A non-GM seller can't write the world-scoped "shops" setting themselves, so a sale to a
+  // custom shop is whispered to an online GM as a quiet chat message; whichever GM client sees it
+  // first performs the actual restock. No sockets required - same pattern as the invite buttons.
+  Hooks.on("createChatMessage", message => {
+    if ( !game.user.isGM ) return;
+    const request = message.getFlag(MODULE_ID, "sellRestock");
+    if ( !request ) return;
+    performRestock(request.shopId, request.soldItems);
+  });
+
   game.modules.get(MODULE_ID).api = {
     openShop,
     inviteToShop,
@@ -68,6 +78,7 @@ Hooks.once("ready", () => {
     getShop,
     saveShop,
     deleteShop,
+    restockCustomShop,
     CrucibleShopApp,
     CrucibleShopManagerApp
   };
@@ -146,6 +157,71 @@ export async function deleteShop(shopId) {
   const shops = game.settings.get(MODULE_ID, "shops") ?? {};
   delete shops[shopId];
   await game.settings.set(MODULE_ID, "shops", shops);
+}
+
+/* -------------------------------------------- */
+/*  Selling / Restocking                         */
+/* -------------------------------------------- */
+
+/**
+ * Restock a custom shop with items a player just sold to it. If the caller is a GM, this happens
+ * immediately. Otherwise the request is whispered to an online GM's client to perform on our
+ * behalf, since only a GM can write the world-scoped "shops" setting.
+ * @param {string} shopId
+ * @param {{itemData: object, unitPrice: number}[]} soldItems
+ * @returns {Promise<void>}
+ */
+export async function restockCustomShop(shopId, soldItems) {
+  if ( !soldItems.length ) return;
+
+  if ( game.user.isGM ) {
+    await performRestock(shopId, soldItems);
+    return;
+  }
+
+  const gmIds = game.users.filter(u => u.isGM && u.active).map(u => u.id);
+  if ( !gmIds.length ) return; // No GM online to hand the restock off to - the sale still went through.
+
+  await ChatMessage.create({
+    content: `<p>${game.i18n.format("CRUCIBLE_SHOP.SellRestockNotice", {name: game.user.name})}</p>`,
+    whisper: gmIds,
+    flags: {[MODULE_ID]: {sellRestock: {shopId, soldItems}}}
+  });
+}
+
+/**
+ * Actually perform a restock: create a standalone world Item for each sold item and add it to the
+ * shop's curated item list. GM only - callers must ensure that themselves.
+ * @param {string} shopId
+ * @param {{itemData: object, unitPrice: number}[]} soldItems
+ * @returns {Promise<void>}
+ */
+async function performRestock(shopId, soldItems) {
+  const shops = getShops();
+  const shop = shops[shopId];
+  if ( !shop || (shop.mode !== "custom") ) return;
+
+  shop.itemUuids ??= [];
+  shop.itemPrices ??= {};
+  for ( const {itemData, unitPrice} of soldItems ) {
+    const data = foundry.utils.deepClone(itemData);
+    delete data._id;
+    if ( data.system?.quantity != null ) data.system.quantity = 1;
+    if ( data.flags ) delete data.flags[MODULE_ID];
+
+    let created;
+    try {
+      created = await Item.implementation.create(data, {temporary: false});
+    } catch(err) {
+      console.error(`${MODULE_ID} | Failed to restock a sold item`, err);
+      continue;
+    }
+    if ( !created?.uuid ) continue;
+
+    shop.itemUuids.push(created.uuid);
+    shop.itemPrices[created.uuid] = data.system?.price ?? unitPrice;
+  }
+  await saveShop(shop);
 }
 
 /* -------------------------------------------- */

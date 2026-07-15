@@ -1,8 +1,8 @@
 {
   "id": "crucible-shop",
   "title": "Crucible Shop",
-  "description": "<p>Adds one or more shops to the Crucible system. Players can spend an actor's real currency on real inventory items, staged into a cart and only applied when they confirm. GMs invite players to shop via a chat button, and can define any number of shops - the built-in default draws from the system's Equipment compendium tree (the same one used during Hero character creation), while custom shops are stocked by hand-picking items.</p>",
-  "version": "0.0.2",
+  "description": "<p>Adds one or more shops to the Crucible system. Players can spend an actor's real currency on real inventory items, staged into a cart and only applied when they confirm - and can sell items back from their own inventory for a GM-configured percentage of their price. GMs invite players to shop via a chat button, and can define any number of shops - the built-in default draws from the system's Equipment compendium tree (the same one used during Hero character creation), while custom shops are stocked by hand-picking items and are automatically restocked with anything players sell into them.</p>",
+  "version": "0.0.3",
   "compatibility": {
     "minimum": "14",
     "verified": "14"
