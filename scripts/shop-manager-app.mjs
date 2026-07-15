@@ -1,4 +1,6 @@
-import {MODULE_ID, getShops, saveShop, deleteShop, inviteToShop, openShop} from "./crucible-shop.mjs";
+import {MODULE_ID, getShops, saveShop, deleteShop, inviteToShop, openShop, getPendingTransactionRequests,
+  resolveTransactionRequest} from "./crucible-shop.mjs";
+import {CrucibleShopApp} from "./shop-app.mjs";
 
 const {ApplicationV2, HandlebarsApplicationMixin} = foundry.applications.api;
 
@@ -39,7 +41,8 @@ export class CrucibleShopManagerApp extends HandlebarsApplicationMixin(Applicati
       invitePublic: CrucibleShopManagerApp.#onInvitePublic,
       inviteWhisper: CrucibleShopManagerApp.#onInviteWhisper,
       openShop: CrucibleShopManagerApp.#onOpenShop,
-      randomizeItems: CrucibleShopManagerApp.#onRandomizeItems
+      randomizeItems: CrucibleShopManagerApp.#onRandomizeItems,
+      addFromCompendium: CrucibleShopManagerApp.#onAddFromCompendium
     }
   };
 
@@ -71,6 +74,11 @@ export class CrucibleShopManagerApp extends HandlebarsApplicationMixin(Applicati
       selected = shopList[0] ?? null;
       if ( selected ) this._state.selectedShopId = selected.id;
     }
+    if ( selected ) {
+      selected.buyRate ??= 100;
+      selected.sellRate ??= 100;
+      selected.requireApproval ??= false;
+    }
 
     let items = [];
     if ( selected?.mode === "custom" ) {
@@ -84,13 +92,38 @@ export class CrucibleShopManagerApp extends HandlebarsApplicationMixin(Applicati
 
     const users = game.users.filter(u => !u.isGM).map(u => ({id: u.id, name: u.name, active: u.active}));
 
+    const approvalMethod = game.settings.get(MODULE_ID, "approvalMethod");
+    const showPendingPanel = (approvalMethod === "panel") || (approvalMethod === "both");
+    const pendingRequests = (selected && showPendingPanel)
+      ? getPendingTransactionRequests(selected.id).map(({messageId, request}) => {
+        const isBuy = request.kind === "buy";
+        return {
+          messageId,
+          kind: request.kind,
+          isBuy,
+          userName: request.userName,
+          actorName: request.actorName,
+          total: CrucibleShopApp.formatCurrency(request.total),
+          entries: request.entries.map(e => ({
+            name: e.name,
+            img: e.img,
+            quantity: e.quantity,
+            unitPrice: isBuy ? e.price : e.unitPrice
+          }))
+        };
+      })
+      : [];
+
     return {
       shops: shopList.map(s => ({...s, active: s.id === this._state.selectedShopId})),
       selected,
       isDefaultShop: selected?.id === "default",
       items,
       users,
-      noUsers: !users.length
+      noUsers: !users.length,
+      showPendingPanel,
+      pendingRequests,
+      noPendingRequests: showPendingPanel && !pendingRequests.length
     };
   }
 
@@ -112,8 +145,20 @@ export class CrucibleShopManagerApp extends HandlebarsApplicationMixin(Applicati
     const modeSelect = this.element.querySelector(".shop-mode-select");
     modeSelect?.addEventListener("change", this.#onChangeMode.bind(this));
 
+    const buyRateInput = this.element.querySelector(".shop-buy-rate-input");
+    buyRateInput?.addEventListener("change", this.#onChangeBuyRate.bind(this));
+
+    const sellRateInput = this.element.querySelector(".shop-sell-rate-input");
+    sellRateInput?.addEventListener("change", this.#onChangeSellRate.bind(this));
+
+    const approvalCheckbox = this.element.querySelector(".shop-require-approval-input");
+    approvalCheckbox?.addEventListener("change", this.#onChangeRequireApproval.bind(this));
+
     const itemList = this.element.querySelector(".shop-manager-item-list");
     itemList?.addEventListener("change", this.#onChangePrice.bind(this));
+
+    const pendingList = this.element.querySelector(".pending-requests-list");
+    pendingList?.addEventListener("click", this.#onClickPendingRequest.bind(this));
   }
 
   /* -------------------------------------------- */
@@ -176,6 +221,80 @@ export class CrucibleShopManagerApp extends HandlebarsApplicationMixin(Applicati
   /* -------------------------------------------- */
 
   /**
+   * Handle the GM editing the percentage of an item's price players receive when selling to
+   * this shop.
+   * @param {Event} event
+   */
+  /**
+   * Handle the GM editing this shop's buy rate - the percentage of an item's listed price
+   * players pay to buy it here (e.g. 80 for "80% of value").
+   * @param {Event} event
+   */
+  async #onChangeBuyRate(event) {
+    const shops = getShops();
+    const shop = shops[this._state.selectedShopId];
+    if ( !shop ) return;
+    const raw = Number(event.target.value ?? 100);
+    shop.buyRate = Number.isFinite(raw) ? Math.max(0, Math.round(raw)) : 100;
+    await saveShop(shop);
+    await this.render({parts: ["manager"]});
+  }
+
+  /* -------------------------------------------- */
+
+  /**
+   * Handle the GM editing this shop's sell rate - the percentage of an item's listed price
+   * players are paid when selling it here (e.g. 120 for "120% of value").
+   * @param {Event} event
+   */
+  async #onChangeSellRate(event) {
+    const shops = getShops();
+    const shop = shops[this._state.selectedShopId];
+    if ( !shop ) return;
+    const raw = Number(event.target.value ?? 100);
+    shop.sellRate = Number.isFinite(raw) ? Math.max(0, Math.round(raw)) : 100;
+    await saveShop(shop);
+    await this.render({parts: ["manager"]});
+  }
+
+  /* -------------------------------------------- */
+
+  /**
+   * Handle the GM toggling whether this shop's transactions need explicit GM approval before
+   * they apply, rather than resolving instantly on the player's client.
+   * @param {Event} event
+   */
+  async #onChangeRequireApproval(event) {
+    const shops = getShops();
+    const shop = shops[this._state.selectedShopId];
+    if ( !shop ) return;
+    shop.requireApproval = event.target.checked;
+    await saveShop(shop);
+    await this.render({parts: ["manager"]});
+  }
+
+  /* -------------------------------------------- */
+
+  /**
+   * Handle a click on an Approve or Deny button in the Pending Requests panel. Delegates to the
+   * same resolveTransactionRequest used by the chat card buttons, so a request can be resolved
+   * from either place interchangeably.
+   * @param {PointerEvent} event
+   */
+  async #onClickPendingRequest(event) {
+    const button = event.target.closest("[data-action]");
+    if ( !button ) return;
+    const action = button.dataset.action;
+    if ( (action !== "approveRequest") && (action !== "denyRequest") ) return;
+    const messageId = button.closest("[data-message-id]")?.dataset.messageId;
+    if ( !messageId ) return;
+    await resolveTransactionRequest(messageId, action === "approveRequest" ? "approved" : "denied");
+    await this.render({parts: ["manager"]});
+  }
+
+  /* -------------------------------------------- */
+
+  /**
    * Handle the GM editing a custom shop item's price. This override always takes precedence over
    * the item's own price, which is how items with no price of their own (or a stale/missing one)
    * can still be sold in a custom shop.
@@ -202,7 +321,7 @@ export class CrucibleShopManagerApp extends HandlebarsApplicationMixin(Applicati
 
   static async #onCreateShop() {
     const id = foundry.utils.randomID();
-    const shop = {id, name: game.i18n.localize("CRUCIBLE_SHOP.NewShop"), mode: "custom", itemUuids: []};
+    const shop = {id, name: game.i18n.localize("CRUCIBLE_SHOP.NewShop"), mode: "custom", itemUuids: [], buyRate: 100, sellRate: 100, requireApproval: false};
     await saveShop(shop);
     this._state.selectedShopId = id;
     await this.render({parts: ["manager"]});
@@ -411,6 +530,115 @@ static async #promptRandomizeParams() {
     ok: {
       label: _loc("ITEM.RANDOMIZE.Generate"),
       icon: "fa-solid fa-wand-sparkles",
+      callback: (event, button) => new foundry.applications.ux.FormDataExtended(button.form).object
+    },
+    rejectClose: false
+  });
+}
+
+/* -------------------------------------------- */
+/*  Bulk Import From Compendium                  */
+/* -------------------------------------------- */
+
+/**
+ * Bulk-add every matching item from one or more compendium packs into a custom shop's item list -
+ * e.g. "add every Weapon in the core Equipment compendiums" in a single click, instead of
+ * dragging items in one at a time. Items already in the shop are skipped (never duplicated or
+ * re-priced); everything else is added at the compendium item's own listed price, editable
+ * afterward like any other item in the list. GM only, and only for custom shops.
+ */
+static async #onAddFromCompendium() {
+  const shops = getShops();
+  const shop = shops[this._state.selectedShopId];
+  if ( !shop || (shop.mode !== "custom") ) return;
+
+  const data = await CrucibleShopManagerApp.#promptCompendiumImportParams();
+  if ( !data ) return; // Dialog was cancelled.
+  if ( !data.packs?.length ) {
+    ui.notifications.warn(game.i18n.localize("CRUCIBLE_SHOP.ImportSelectPackFirst"));
+    return;
+  }
+
+  shop.itemUuids ??= [];
+  const existing = new Set(shop.itemUuids);
+  const typeFilter = new Set(data.itemTypes ?? []);
+  let added = 0;
+
+  for ( const packId of data.packs ) {
+    const pack = game.packs.get(packId);
+    if ( !pack ) continue;
+    let docs;
+    try {
+      docs = await pack.getDocuments();
+    } catch(err) {
+      console.error(`${MODULE_ID} | Failed to load compendium ${packId}`, err);
+      continue;
+    }
+    for ( const item of docs ) {
+      if ( typeFilter.size && !typeFilter.has(item.type) ) continue;
+      if ( data.priceOnly && !item.system?.price ) continue;
+      if ( existing.has(item.uuid) ) continue;
+      existing.add(item.uuid);
+      shop.itemUuids.push(item.uuid);
+      added++;
+    }
+  }
+
+  if ( !added ) {
+    ui.notifications.info(game.i18n.localize("CRUCIBLE_SHOP.ImportNoneAdded"));
+    return;
+  }
+
+  await saveShop(shop);
+  await this.render({parts: ["manager"]});
+  ui.notifications.info(game.i18n.format("CRUCIBLE_SHOP.ImportSuccess", {count: added}));
+}
+
+/* -------------------------------------------- */
+
+/**
+ * Build and present the compendium bulk-import dialog: which pack(s) to pull from, which item
+ * type(s) to include (leave all unchecked for every type - e.g. check only "Weapon" and "Armor"
+ * to pull in just those), and whether to skip items with no price set.
+ * @returns {Promise<{packs: string[], itemTypes: string[], priceOnly: boolean}|null>}
+ */
+static async #promptCompendiumImportParams() {
+  const fields = foundry.data.fields;
+  const _loc = game.i18n.localize.bind(game.i18n);
+
+  const itemPacks = game.packs.filter(p => p.documentName === "Item");
+  const equipmentPackIds = new Set(crucible?.CONFIG?.packs?.equipment ?? []);
+  const itemTypes = (game.documentTypes?.Item ?? []).filter(t => t !== "base");
+
+  const packsField = new fields.SetField(new fields.StringField({
+    choices: Object.fromEntries(itemPacks.map(p => [p.collection, p.title]))
+  }), {label: _loc("CRUCIBLE_SHOP.ImportPacks")});
+  const itemTypesField = new fields.SetField(new fields.StringField({
+    choices: Object.fromEntries(itemTypes.map(t => [t, _loc(`TYPES.Item.${t}`) || t]))
+  }), {label: _loc("CRUCIBLE_SHOP.ImportItemTypes")});
+  const priceOnlyField = new fields.BooleanField({label: _loc("CRUCIBLE_SHOP.ImportPriceOnly")});
+
+  const dialogHTML = document.createElement("div");
+  dialogHTML.append(
+    packsField.toFormGroup(
+      {stacked: true, hint: _loc("CRUCIBLE_SHOP.ImportPacksHint")},
+      {name: "packs", type: "checkboxes",
+        value: itemPacks.filter(p => equipmentPackIds.has(p.collection)).map(p => p.collection)}
+    ),
+    itemTypesField.toFormGroup(
+      {stacked: true, hint: _loc("CRUCIBLE_SHOP.ImportItemTypesHint")},
+      {name: "itemTypes", type: "checkboxes", value: []}
+    ),
+    priceOnlyField.toFormGroup({hint: _loc("CRUCIBLE_SHOP.ImportPriceOnlyHint")}, {name: "priceOnly", value: true})
+  );
+
+  return foundry.applications.api.DialogV2.prompt({
+    window: {title: _loc("CRUCIBLE_SHOP.ImportTitle"), icon: "fa-solid fa-boxes-stacked"},
+    position: {width: 520, height: "auto"},
+    content: dialogHTML,
+    ok: {
+      label: _loc("CRUCIBLE_SHOP.ImportButton"),
+      icon: "fa-solid fa-boxes-stacked",
       callback: (event, button) => new foundry.applications.ux.FormDataExtended(button.form).object
     },
     rejectClose: false
