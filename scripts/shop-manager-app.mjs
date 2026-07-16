@@ -387,14 +387,7 @@ export class CrucibleShopManagerApp extends HandlebarsApplicationMixin(Applicati
   /* -------------------------------------------- */
 
   static async #onOpenShop() {
-    const shopId = this._state.selectedShopId;
-    const actor = (game.user.character?.isOwner ? game.user.character : null)
-      ?? game.actors.find(a => (a.type === "hero") && a.isOwner);
-    if ( !actor ) {
-      ui.notifications.warn(game.i18n.localize("CRUCIBLE_SHOP.NoActor"));
-      return;
-    }
-    await openShop(actor, shopId);
+    await openShop(undefined, this._state.selectedShopId);
   }
 
 /* -------------------------------------------- */
