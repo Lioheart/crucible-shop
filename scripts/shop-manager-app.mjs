@@ -4,6 +4,19 @@ import {CrucibleShopApp} from "./shop-app.mjs";
 
 const {ApplicationV2, HandlebarsApplicationMixin} = foundry.applications.api;
 
+// Default to a wide-open price range (0 - a high ceiling) rather than leaving price fields blank.
+// A blank NumberField input resolves to 0, so priceMin AND priceMax would both land on 0 - a
+// window that matches no real item.
+const DEFAULT_PRICE_MIN = 0;
+const DEFAULT_PRICE_MAX = 100000;
+
+// Upper bound on how many items a single "Generate Items" click can roll at once, mostly to keep
+// a mis-click from flooding chat with dozens of cards.
+const MAX_RANDOMIZE_COUNT = 20;
+
+// Name of the top-level Item folder that all shop-generated items are filed under.
+const ROOT_FOLDER_NAME = "CrucibleShops";
+
 /**
  * A GM-facing application for creating and curating shops.
  *
@@ -81,13 +94,30 @@ export class CrucibleShopManagerApp extends HandlebarsApplicationMixin(Applicati
     }
 
     let items = [];
+    let itemGroups = [];
     if ( selected?.mode === "custom" ) {
       const priceOverrides = selected.itemPrices ?? {};
       items = await Promise.all((selected.itemUuids ?? []).map(async uuid => {
+        const isCompendium = uuid.startsWith("Compendium.");
         const item = await fromUuid(uuid);
-        if ( !item ) return {uuid, name: game.i18n.localize("CRUCIBLE_SHOP.MissingItem"), img: "icons/svg/hazard.svg", price: 0, missing: true};
-        return {uuid, name: item.name, img: item.img, price: priceOverrides[uuid] ?? item.system?.price ?? 0};
+        if ( !item ) {
+          return {uuid, name: game.i18n.localize("CRUCIBLE_SHOP.MissingItem"), img: "icons/svg/hazard.svg",
+            price: 0, missing: true, isCompendium};
+        }
+        return {uuid, name: item.name, img: item.img, price: priceOverrides[uuid] ?? item.system?.price ?? 0,
+          isCompendium};
       }));
+
+      // Items stay wherever they actually live - compendium items are never copied into the
+      // world - so grouping here is purely a display convenience: it lets a GM see and browse
+      // "everything this shop pulled from a compendium" separately from items that live in the
+      // world (dragged in manually, or generated via Randomize), without moving any documents.
+      const compendiumItems = items.filter(i => i.isCompendium);
+      const worldItems = items.filter(i => !i.isCompendium);
+      itemGroups = [
+        compendiumItems.length ? {key: "compendium", label: game.i18n.localize("CRUCIBLE_SHOP.SourceCompendium"), items: compendiumItems} : null,
+        worldItems.length ? {key: "world", label: game.i18n.localize("CRUCIBLE_SHOP.SourceWorld"), items: worldItems} : null
+      ].filter(_ => _);
     }
 
     const users = game.users.filter(u => !u.isGM).map(u => ({id: u.id, name: u.name, active: u.active}));
@@ -119,6 +149,7 @@ export class CrucibleShopManagerApp extends HandlebarsApplicationMixin(Applicati
       selected,
       isDefaultShop: selected?.id === "default",
       items,
+      itemGroups,
       users,
       noUsers: !users.length,
       showPendingPanel,
@@ -387,22 +418,45 @@ export class CrucibleShopManagerApp extends HandlebarsApplicationMixin(Applicati
   /* -------------------------------------------- */
 
   static async #onOpenShop() {
-    const shopId = this._state.selectedShopId;
-    const actor = (game.user.character?.isOwner ? game.user.character : null)
-      ?? game.actors.find(a => (a.type === "hero") && a.isOwner);
-    if ( !actor ) {
-      ui.notifications.warn(game.i18n.localize("CRUCIBLE_SHOP.NoActor"));
-      return;
-    }
-    await openShop(actor, shopId);
+    await openShop(undefined, this._state.selectedShopId);
   }
 
 /* -------------------------------------------- */
 
 /**
+ * Find (or create) the world Item folder that randomized items for a given shop should be filed
+ * into: a top-level "CrucibleShops" folder, with one child subfolder per shop, named after the
+ * shop. Reuses existing folders where they already exist rather than creating duplicates on every
+ * generate click.
+ * @param {{name: string}} shop  The shop being stocked.
+ * @returns {Promise<Folder|null>}  The shop's subfolder, or null if folder creation failed.
+ */
+static async #getOrCreateShopFolder(shop) {
+  try {
+    let root = game.folders.find(f => (f.type === "Item") && !f.folder && (f.name === ROOT_FOLDER_NAME));
+    if ( !root ) {
+      root = await Folder.implementation.create({name: ROOT_FOLDER_NAME, type: "Item", folder: null});
+    }
+
+    const shopName = shop.name || "Shop";
+    let sub = game.folders.find(f => (f.type === "Item") && (f.folder?.id === root.id) && (f.name === shopName));
+    if ( !sub ) {
+      sub = await Folder.implementation.create({name: shopName, type: "Item", folder: root.id});
+    }
+    return sub;
+  } catch (err) {
+    console.error("Crucible Shop | Failed to find or create shop item folder", err);
+    return null;
+  }
+}
+
+/* -------------------------------------------- */
+
+/**
  * Prompt the GM for randomization parameters (mirroring the system's own
- * `CrucibleItem.randomizeDialog` form) and generate one random item to stock a custom shop.
- * GM only, and only for custom shops.
+ * `CrucibleItem.randomizeDialog` form, plus a quantity and multi-tier quality picker of our own)
+ * and generate one or more random items to stock a custom shop. GM only, and only for custom
+ * shops.
  *
  * NOTE: this deliberately does NOT call `CrucibleItem.randomizeDialog()`. That method rolls an
  * item internally, posts a chat message built from THAT roll, but only returns the ChatMessage -
@@ -411,8 +465,8 @@ export class CrucibleShopManagerApp extends HandlebarsApplicationMixin(Applicati
  * `CrucibleItem.randomize()` a second time with that same range therefore rolls a brand new,
  * independent item with its own price - which is why the item added to the shop never matched
  * what was posted to chat, and why two unrelated things (a chat message, a shop item) came out of
- * one click. Rolling once here and reusing that single result for both the shop and the chat card
- * fixes both.
+ * one click. Rolling once here (per generated item) and reusing that single result for both the
+ * shop and the chat card fixes both.
  */
 static async #onRandomizeItems() {
   const shops = getShops();
@@ -428,61 +482,92 @@ static async #onRandomizeItems() {
   const data = await CrucibleShopManagerApp.#promptRandomizeParams();
   if ( !data ) return; // Dialog was cancelled.
 
-  let item;
-  try {
-    item = await CrucibleItem.randomize({
-      price: {min: data.priceMin, max: data.priceMax},
-      quality: data.quality || undefined,
-      itemTypes: data.itemTypes ?? [],
-      baseUuid: data.baseUuid || undefined
-    });
+  const count = Math.min(Math.max(Number(data.count) || 1, 1), MAX_RANDOMIZE_COUNT);
+  const qualityChoices = Array.from(data.quality ?? []);
 
-    // Persist the SAME item we are about to price and post - not a freshly re-rolled one.
-    item = await Item.implementation.create(item.toObject(), {
-      temporary: false
-    });
-  } catch (err) {
-    console.error(
-      "Crucible Shop | Failed to generate or persist the randomized item",
-      err
-    );
+  // Resolve (or create) CrucibleShops/<Shop Name> once per batch rather than once per item.
+  const folder = await CrucibleShopManagerApp.#getOrCreateShopFolder(shop);
+
+  shop.itemUuids ??= [];
+  const generated = [];
+  let failures = 0;
+  let lastError = null;
+
+  for ( let i = 0; i < count; i++ ) {
+    // Each item in the batch rolls its own quality independently from among the checked tiers,
+    // so "check three tiers, generate ten items" yields a mixed spread rather than one tier
+    // repeated ten times.
+    const quality = qualityChoices.length
+      ? qualityChoices[Math.floor(Math.random() * qualityChoices.length)]
+      : undefined;
+
+    let item;
+    try {
+      item = await CrucibleItem.randomize({
+        price: {min: data.priceMin, max: data.priceMax},
+        quality,
+        itemTypes: data.itemTypes ?? [],
+        baseUuid: data.baseUuid || undefined
+      });
+
+      // Persist the SAME item we are about to price and post - not a freshly re-rolled one.
+      const itemData = item.toObject();
+      if ( folder ) itemData.folder = folder.id;
+      item = await Item.implementation.create(itemData, {
+        temporary: false
+      });
+    } catch (err) {
+      console.error("Crucible Shop | Failed to generate or persist a randomized item", err);
+      lastError = err;
+      failures++;
+      continue;
+    }
+
+    if ( !item?.uuid || shop.itemUuids.includes(item.uuid) ) {
+      failures++;
+      continue;
+    }
+
+    shop.itemUuids.push(item.uuid);
+    generated.push(item);
+  }
+
+  if ( !generated.length ) {
     // err.message here is often something actionable, e.g. "No eligible base items found for
     // the given constraints" when the price range/item types/quality combination is too narrow -
     // show that instead of a generic failure notice so the GM knows what to loosen.
-    ui.notifications.error(err.message || game.i18n.localize("CRUCIBLE_SHOP.RandomizeFailed"));
+    ui.notifications.error(lastError?.message || game.i18n.localize("CRUCIBLE_SHOP.RandomizeFailed"));
     return;
   }
-
-  shop.itemUuids ??= [];
-
-  if ( !item?.uuid || shop.itemUuids.includes(item.uuid) ) {
-    ui.notifications.warn(game.i18n.localize("CRUCIBLE_SHOP.RandomizeFailed"));
-    return;
-  }
-
-  shop.itemUuids.push(item.uuid);
 
   await saveShop(shop);
   await this.render({parts: ["manager"]});
 
-  // Post a single chat card for the exact item we just created and added to the shop, so the
-  // price players see in chat always matches the price they'll actually pay.
-  try {
-    const enricherString = (typeof item.toLootEnricher === "function")
-      ? await item.toLootEnricher()
-      : `@UUID[${item.uuid}]{${item.name}}`;
-    await ChatMessage.implementation.create({
-      content: `<p>${enricherString}</p>`,
-      flavor: game.i18n.localize("ITEM.RANDOMIZE.Flavor", {type: game.i18n.localize(`TYPES.Item.${item.type}`)})
-    });
-  } catch (err) {
-    console.error("Crucible Shop | Failed to post the randomized item chat card", err);
+  // Post one chat card per generated item, matching the price players will actually pay.
+  for ( const item of generated ) {
+    try {
+      const enricherString = (typeof item.toLootEnricher === "function")
+        ? await item.toLootEnricher()
+        : `@UUID[${item.uuid}]{${item.name}}`;
+      await ChatMessage.implementation.create({
+        content: `<p>${enricherString}</p>`,
+        flavor: game.i18n.localize("ITEM.RANDOMIZE.Flavor", {type: game.i18n.localize(`TYPES.Item.${item.type}`)})
+      });
+    } catch (err) {
+      console.error("Crucible Shop | Failed to post a randomized item chat card", err);
+    }
   }
 
-  ui.notifications.info(
-    game.i18n.format("CRUCIBLE_SHOP.RandomizeSuccess", {count: 1})
-  );
+  if ( failures ) {
+    ui.notifications.warn(
+      game.i18n.format("CRUCIBLE_SHOP.RandomizePartial", {added: generated.length, failed: failures})
+    );
+  } else {
+    ui.notifications.info(
+      game.i18n.format("CRUCIBLE_SHOP.RandomizeSuccess", {count: generated.length})
+    );
   }
+}
 
 /* -------------------------------------------- */
 
@@ -501,31 +586,35 @@ static async #promptRandomizeParams() {
   // Default to a wide-open range (0 - a high ceiling) rather than leaving these blank. A blank
   // input resolves to 0, so priceMin AND priceMax both landed on 0 - a window that matches no
   // real item - which is why randomize() started throwing "No eligible base items found".
-  const DEFAULT_PRICE_MIN = 0;
-  const DEFAULT_PRICE_MAX = 100000;
   const priceMinField = new fields.NumberField({label: _loc("ITEM.RANDOMIZE.PriceMin"), initial: DEFAULT_PRICE_MIN});
   const priceMaxField = new fields.NumberField({label: _loc("ITEM.RANDOMIZE.PriceMax"), initial: DEFAULT_PRICE_MAX});
+  const countField = new fields.NumberField({label: _loc("CRUCIBLE_SHOP.RandomizeCount"),
+    min: 1, max: MAX_RANDOMIZE_COUNT, step: 1, integer: true, initial: 1});
   const baseUuidField = new fields.DocumentUUIDField({label: _loc("ITEM.RANDOMIZE.BaseItem"),
     required: false, blank: true, type: "Item"});
   const itemTypesField = new fields.SetField(new fields.StringField({
     choices: Object.fromEntries(Array.from(affixableTypes).map(t => [t, game.i18n.localize(`TYPES.Item.${t}`)]))
   }), {label: _loc("ITEM.RANDOMIZE.ItemTypes")});
-  const qualityField = new fields.StringField({label: _loc("ITEM.RANDOMIZE.Quality"), required: false,
-    blank: true, choices: {"": _loc("ITEM.RANDOMIZE.QualityAny"),
-      ...Object.fromEntries(Object.values(QT).map(q => [q.id, _loc(q.label)]))}});
+  const qualityField = new fields.SetField(new fields.StringField({
+    choices: Object.fromEntries(Object.values(QT).map(q => [q.id, _loc(q.label)]))
+  }), {label: _loc("ITEM.RANDOMIZE.Quality")});
 
   const dialogHTML = document.createElement("div");
   dialogHTML.append(
     priceMinField.toFormGroup({}, {name: "priceMin", input: currencyInput, value: DEFAULT_PRICE_MIN}),
     priceMaxField.toFormGroup({}, {name: "priceMax", input: currencyInput, value: DEFAULT_PRICE_MAX}),
+    countField.toFormGroup({hint: _loc("CRUCIBLE_SHOP.RandomizeCountHint")}, {name: "count", value: 1}),
     baseUuidField.toFormGroup({}, {name: "baseUuid"}),
     itemTypesField.toFormGroup({stacked: true}, {name: "itemTypes", type: "checkboxes", value: Array.from(affixableTypes)}),
-    qualityField.toFormGroup({}, {name: "quality"})
+    qualityField.toFormGroup(
+      {stacked: true, hint: _loc("CRUCIBLE_SHOP.RandomizeQualityHint")},
+      {name: "quality", type: "checkboxes", value: []}
+    )
   );
 
   return foundry.applications.api.DialogV2.prompt({
     window: {title: _loc("ITEM.RANDOMIZE.Title"), icon: "fa-wand-sparkles"},
-    position: {width: 520},
+    position: {width: 520, height: "auto"},
     content: dialogHTML,
     ok: {
       label: _loc("ITEM.RANDOMIZE.Generate"),
@@ -562,6 +651,9 @@ static async #onAddFromCompendium() {
   shop.itemUuids ??= [];
   const existing = new Set(shop.itemUuids);
   const typeFilter = new Set(data.itemTypes ?? []);
+  const qualityFilter = new Set(data.qualityTiers ?? []);
+  const priceMin = Number.isFinite(data.priceMin) ? data.priceMin : DEFAULT_PRICE_MIN;
+  const priceMax = Number.isFinite(data.priceMax) ? data.priceMax : DEFAULT_PRICE_MAX;
   let added = 0;
 
   for ( const packId of data.packs ) {
@@ -577,6 +669,9 @@ static async #onAddFromCompendium() {
     for ( const item of docs ) {
       if ( typeFilter.size && !typeFilter.has(item.type) ) continue;
       if ( data.priceOnly && !item.system?.price ) continue;
+      const price = item.system?.price ?? 0;
+      if ( (price < priceMin) || (price > priceMax) ) continue;
+      if ( qualityFilter.size && !qualityFilter.has(item.system?.quality) ) continue;
       if ( existing.has(item.uuid) ) continue;
       existing.add(item.uuid);
       shop.itemUuids.push(item.uuid);
@@ -598,17 +693,22 @@ static async #onAddFromCompendium() {
 
 /**
  * Build and present the compendium bulk-import dialog: which pack(s) to pull from, which item
- * type(s) to include (leave all unchecked for every type - e.g. check only "Weapon" and "Armor"
- * to pull in just those), and whether to skip items with no price set.
- * @returns {Promise<{packs: string[], itemTypes: string[], priceOnly: boolean}|null>}
+ * type(s) and quality tier(s) to include (leave all unchecked for every type/tier - e.g. check
+ * only "Weapon" and "Armor" to pull in just those), an optional price range, and whether to skip
+ * items with no price set.
+ * @returns {Promise<{packs: string[], itemTypes: string[], qualityTiers: string[],
+ *   priceMin: number, priceMax: number, priceOnly: boolean}|null>}
  */
 static async #promptCompendiumImportParams() {
   const fields = foundry.data.fields;
   const _loc = game.i18n.localize.bind(game.i18n);
+  const QT = crucible.CONST.ITEM.QUALITY_TIERS;
 
   const itemPacks = game.packs.filter(p => p.documentName === "Item");
   const equipmentPackIds = new Set(crucible?.CONFIG?.packs?.equipment ?? []);
   const itemTypes = (game.documentTypes?.Item ?? []).filter(t => t !== "base");
+
+  const currencyInput = (field, config) => crucible.api.applications.elements.HTMLCrucibleCurrencyElement.create(config);
 
   const packsField = new fields.SetField(new fields.StringField({
     choices: Object.fromEntries(itemPacks.map(p => [p.collection, p.title]))
@@ -616,6 +716,11 @@ static async #promptCompendiumImportParams() {
   const itemTypesField = new fields.SetField(new fields.StringField({
     choices: Object.fromEntries(itemTypes.map(t => [t, _loc(`TYPES.Item.${t}`) || t]))
   }), {label: _loc("CRUCIBLE_SHOP.ImportItemTypes")});
+  const qualityTiersField = new fields.SetField(new fields.StringField({
+    choices: Object.fromEntries(Object.values(QT).map(q => [q.id, _loc(q.label)]))
+  }), {label: _loc("ITEM.RANDOMIZE.Quality")});
+  const priceMinField = new fields.NumberField({label: _loc("ITEM.RANDOMIZE.PriceMin"), initial: DEFAULT_PRICE_MIN});
+  const priceMaxField = new fields.NumberField({label: _loc("ITEM.RANDOMIZE.PriceMax"), initial: DEFAULT_PRICE_MAX});
   const priceOnlyField = new fields.BooleanField({label: _loc("CRUCIBLE_SHOP.ImportPriceOnly")});
 
   const dialogHTML = document.createElement("div");
@@ -629,6 +734,13 @@ static async #promptCompendiumImportParams() {
       {stacked: true, hint: _loc("CRUCIBLE_SHOP.ImportItemTypesHint")},
       {name: "itemTypes", type: "checkboxes", value: []}
     ),
+    qualityTiersField.toFormGroup(
+      {stacked: true, hint: _loc("CRUCIBLE_SHOP.ImportQualityHint")},
+      {name: "qualityTiers", type: "checkboxes", value: []}
+    ),
+    priceMinField.toFormGroup({hint: _loc("CRUCIBLE_SHOP.ImportPriceRangeHint")},
+      {name: "priceMin", input: currencyInput, value: DEFAULT_PRICE_MIN}),
+    priceMaxField.toFormGroup({}, {name: "priceMax", input: currencyInput, value: DEFAULT_PRICE_MAX}),
     priceOnlyField.toFormGroup({hint: _loc("CRUCIBLE_SHOP.ImportPriceOnlyHint")}, {name: "priceOnly", value: true})
   );
 

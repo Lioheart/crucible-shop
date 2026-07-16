@@ -24,22 +24,22 @@
     {{#if selected}}
 
     <div class="shop-detail-header">
-      <div class="form-group">
+      <div class="form-group form-group-name">
         <label>{{localize "CRUCIBLE_SHOP.ShopName"}}</label>
         <input type="text" class="shop-name-input" value="{{selected.name}}"/>
       </div>
-      <div class="form-group">
+      <div class="form-group form-group-mode">
         <label>{{localize "CRUCIBLE_SHOP.Stock"}}</label>
         <select class="shop-mode-select" {{#if isDefaultShop}}disabled{{/if}}>
           <option value="default" {{#if (eq selected.mode "default")}}selected{{/if}}>{{localize "CRUCIBLE_SHOP.ModeDefault"}}</option>
           <option value="custom" {{#if (eq selected.mode "custom")}}selected{{/if}}>{{localize "CRUCIBLE_SHOP.ModeCustom"}}</option>
         </select>
       </div>
-      <div class="form-group">
+      <div class="form-group form-group-rate">
         <label data-tooltip="{{localize 'CRUCIBLE_SHOP.BuyRateHint'}}">{{localize "CRUCIBLE_SHOP.BuyRate"}}</label>
         <input type="number" class="shop-buy-rate-input" min="0" max="500" step="5" value="{{selected.buyRate}}"/>
       </div>
-      <div class="form-group">
+      <div class="form-group form-group-rate">
         <label data-tooltip="{{localize 'CRUCIBLE_SHOP.SellRateHint'}}">{{localize "CRUCIBLE_SHOP.SellRate"}}</label>
         <input type="number" class="shop-sell-rate-input" min="0" max="500" step="5" value="{{selected.sellRate}}"/>
       </div>
@@ -64,10 +64,15 @@
         </button>
       </div>
       <ol class="shop-manager-item-list">
-        {{#each items as |item|}}
+        {{#each itemGroups as |group|}}
+        <li class="shop-item-group-header">{{group.label}}</li>
+        {{#each group.items as |item|}}
         <li class="shop-manager-item {{#if item.missing}}missing{{/if}}" data-uuid="{{item.uuid}}">
           <img src="{{item.img}}" alt="{{item.name}}"/>
-          <span class="item-name">{{item.name}}</span>
+          <span class="item-name" title="{{item.name}}">{{item.name}}</span>
+          {{#if item.isCompendium}}
+          <i class="fa-solid fa-boxes-stacked item-source-badge" data-tooltip="{{localize 'CRUCIBLE_SHOP.SourceCompendium'}}"></i>
+          {{/if}}
           {{#unless item.missing}}
           <crucible-currency class="item-price-input" data-uuid="{{item.uuid}}" value="{{item.price}}"
                               data-tooltip="{{localize 'CRUCIBLE_SHOP.ItemPrice'}}"></crucible-currency>
@@ -76,6 +81,7 @@
             <i class="fa-solid fa-xmark"></i>
           </a>
         </li>
+        {{/each}}
         {{else}}
         <li class="empty">{{localize "CRUCIBLE_SHOP.NoCustomItems"}}</li>
         {{/each}}

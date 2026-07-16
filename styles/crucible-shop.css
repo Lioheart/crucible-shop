@@ -413,14 +413,39 @@
 .crucible-shop-manager .shop-detail-header {
   display: flex;
   align-items: flex-end;
-  gap: 0.75rem;
+  flex-wrap: wrap;
+  gap: 0.6rem;
 }
 
 .crucible-shop-manager .shop-detail-header .form-group {
-  flex: 1;
   display: flex;
   flex-direction: column;
-  gap: 0.15rem;
+  gap: 0.2rem;
+}
+
+.crucible-shop-manager .shop-detail-header .form-group label {
+  font-size: var(--font-size-11, 11px);
+  white-space: nowrap;
+  opacity: 0.85;
+}
+
+.crucible-shop-manager .shop-detail-header .form-group-name {
+  flex: 1 1 160px;
+  min-width: 120px;
+}
+
+.crucible-shop-manager .shop-detail-header .form-group-mode {
+  flex: 0 0 130px;
+}
+
+.crucible-shop-manager .shop-detail-header .form-group-rate {
+  flex: 0 0 auto;
+}
+
+.crucible-shop-manager .shop-detail-header .form-group-rate input {
+  width: 64px;
+  text-align: center;
+  padding-inline: 0.25rem;
 }
 
 .crucible-shop-manager .shop-detail-header .form-group-checkbox {
@@ -430,8 +455,19 @@
   gap: 0.4rem;
 }
 
+.crucible-shop-manager .shop-detail-header .form-group-checkbox label {
+  white-space: nowrap;
+}
+
 .crucible-shop-manager .shop-detail-header .form-group-checkbox input {
   width: auto;
+  margin: 0;
+}
+
+.crucible-shop-manager .shop-detail-header .preview-shop {
+  flex: 0 0 auto;
+  margin-inline-start: auto;
+  white-space: nowrap;
 }
 
 .crucible-shop-manager .shop-item-drop {
@@ -531,22 +567,26 @@
   flex: 1;
   min-height: 0;
   overflow-y: auto;
+  scrollbar-gutter: stable;
 }
 
 .crucible-shop-manager .shop-manager-item {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 0.5rem;
   padding: 0.2rem 0.4rem;
   background: rgba(255, 255, 255, 0.04);
   border-radius: 4px;
+  min-height: 36px;
 }
 
 .crucible-shop-manager .shop-manager-item img {
+  flex: 0 0 auto;
   width: 28px;
   height: 28px;
   border: none;
   border-radius: 4px;
+  align-self: flex-start;
 }
 
 .crucible-shop-manager .shop-manager-item.missing {
@@ -555,6 +595,52 @@
 
 .crucible-shop-manager .shop-manager-item .item-name {
   flex: 1;
+  min-width: 0;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+  white-space: nowrap !important;
+  align-self: center;
+  padding-block: 0.35rem;
+}
+
+.crucible-shop-manager .shop-manager-item .item-price-input {
+  align-self: center;
+}
+
+.crucible-shop-manager .shop-manager-item .remove-item {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 4px;
+  align-self: flex-start;
+}
+
+.crucible-shop-manager .shop-manager-item .remove-item:hover {
+  background: rgba(209, 101, 101, 0.2);
+  color: #d16565;
+}
+
+.crucible-shop-manager .shop-item-group-header {
+  flex: 0 0 auto;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  opacity: 0.65;
+  padding: 0.4rem 0.2rem 0.1rem;
+}
+
+.crucible-shop-manager .shop-item-group-header:first-child {
+  padding-top: 0.1rem;
+}
+
+.crucible-shop-manager .shop-manager-item .item-source-badge {
+  flex: 0 0 auto;
+  align-self: center;
+  opacity: 0.55;
+  font-size: 0.8rem;
 }
 
 .crucible-shop-manager .shop-invite-panel {

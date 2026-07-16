@@ -560,20 +560,76 @@ function renderTransactionCard(request) {
 /* -------------------------------------------- */
 
 /**
+ * Resolve which actor a user should shop as: their assigned character, or (mainly for GMs, who
+ * own every actor) their one owned Hero. If more than one owned Hero exists and none is assigned
+ * as the user's character, prompt them to choose which one is shopping - this is the common GM
+ * case, since a GM owns every Hero in the world but usually isn't playing one personally.
+ * @param {object} [options]
+ * @param {boolean} [options.warn=true]   Show a ui.notifications.warn when no actor is available
+ *                                        at all (not shown if the user cancels a choice prompt).
+ * @returns {Promise<Actor|null>}
+ */
+export async function resolveShopActor({warn=true}={}) {
+  const assigned = game.user.character?.isOwner ? game.user.character : null;
+  if ( assigned ) return assigned;
+
+  const heroes = game.actors.filter(a => (a.type === "hero") && a.isOwner);
+  if ( heroes.length === 1 ) return heroes[0];
+
+  if ( heroes.length > 1 ) return promptActorChoice(heroes);
+
+  if ( warn ) ui.notifications.warn(game.i18n.localize("CRUCIBLE_SHOP.NoActor"));
+  return null;
+}
+
+/* -------------------------------------------- */
+
+/**
+ * Prompt the user to pick which of several owned Hero actors is shopping.
+ * @param {Actor[]} actors
+ * @returns {Promise<Actor|null>}   The chosen actor, or null if the dialog was cancelled.
+ */
+async function promptActorChoice(actors) {
+  const fields = foundry.data.fields;
+  const _loc = game.i18n.localize.bind(game.i18n);
+
+  const actorField = new fields.StringField({
+    label: _loc("CRUCIBLE_SHOP.ChooseActor"),
+    choices: Object.fromEntries(actors.map(a => [a.uuid, a.name]))
+  });
+
+  const dialogHTML = document.createElement("div");
+  dialogHTML.append(actorField.toFormGroup(
+    {hint: _loc("CRUCIBLE_SHOP.ChooseActorHint")},
+    {name: "actorUuid", value: actors[0].uuid}
+  ));
+
+  const actorUuid = await foundry.applications.api.DialogV2.prompt({
+    window: {title: _loc("CRUCIBLE_SHOP.ChooseActorTitle"), icon: "fa-solid fa-users"},
+    position: {width: 400},
+    content: dialogHTML,
+    ok: {
+      label: _loc("CRUCIBLE_SHOP.Preview"),
+      icon: "fa-solid fa-eye",
+      callback: (event, button) => new foundry.applications.ux.FormDataExtended(button.form).object.actorUuid
+    },
+    rejectClose: false
+  });
+  return actorUuid ? fromUuidSync(actorUuid) : null;
+}
+
+/* -------------------------------------------- */
+
+/**
  * Open a shop application for a given (or auto-detected) actor.
  * @param {Actor} [actor]     The actor doing the shopping. Defaults to the current user's assigned
- *                            character, or their first owned Hero actor.
+ *                            character, their one owned Hero, or a GM's choice among several.
  * @param {string} [shopId]   The shop to open. Defaults to the built-in default shop.
  * @returns {Promise<Application|null>}
  */
 export async function openShop(actor, shopId="default") {
-  actor ??= (game.user.character?.isOwner ? game.user.character : null)
-    ?? game.actors.find(a => (a.type === "hero") && a.isOwner);
-
-  if ( !actor ) {
-    ui.notifications.warn(game.i18n.localize("CRUCIBLE_SHOP.NoActor"));
-    return null;
-  }
+  actor ??= await resolveShopActor();
+  if ( !actor ) return null;
 
   const shop = getShop(shopId);
   const app = new CrucibleShopApp({actor, shop});
