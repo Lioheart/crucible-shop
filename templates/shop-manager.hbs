@@ -67,7 +67,7 @@
         {{#each items as |item|}}
         <li class="shop-manager-item {{#if item.missing}}missing{{/if}}" data-uuid="{{item.uuid}}">
           <img src="{{item.img}}" alt="{{item.name}}"/>
-          <span class="item-name">{{item.name}}</span>
+          <span class="item-name" title="{{item.name}}">{{item.name}}</span>
           {{#unless item.missing}}
           <crucible-currency class="item-price-input" data-uuid="{{item.uuid}}" value="{{item.price}}"
                               data-tooltip="{{localize 'CRUCIBLE_SHOP.ItemPrice'}}"></crucible-currency>
