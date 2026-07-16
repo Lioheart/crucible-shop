@@ -30,6 +30,8 @@
     "DropHint": "Drag items here from the world, a compendium, or an actor sheet to add them to this shop.",
     "NoCustomItems": "No items added yet.",
     "MissingItem": "(missing item)",
+    "SourceCompendium": "From Compendium",
+    "SourceWorld": "World Items",
     "SelectCustomFirst": "Switch this shop to Custom Item List before adding items.",
     "DefaultModeHint": "This shop draws its stock from the system's default Equipment compendiums - the same items available during Hero character creation.",
     "InvitePlayers": "Invite Players",

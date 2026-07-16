@@ -623,6 +623,26 @@
   color: #d16565;
 }
 
+.crucible-shop-manager .shop-item-group-header {
+  flex: 0 0 auto;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  opacity: 0.65;
+  padding: 0.4rem 0.2rem 0.1rem;
+}
+
+.crucible-shop-manager .shop-item-group-header:first-child {
+  padding-top: 0.1rem;
+}
+
+.crucible-shop-manager .shop-manager-item .item-source-badge {
+  flex: 0 0 auto;
+  align-self: center;
+  opacity: 0.55;
+  font-size: 0.8rem;
+}
+
 .crucible-shop-manager .shop-invite-panel {
   border-top: 1px solid rgba(255, 255, 255, 0.1);
   padding-top: 0.75rem;

@@ -14,6 +14,9 @@ const DEFAULT_PRICE_MAX = 100000;
 // a mis-click from flooding chat with dozens of cards.
 const MAX_RANDOMIZE_COUNT = 20;
 
+// Name of the top-level Item folder that all shop-generated items are filed under.
+const ROOT_FOLDER_NAME = "CrucibleShops";
+
 /**
  * A GM-facing application for creating and curating shops.
  *
@@ -91,13 +94,30 @@ export class CrucibleShopManagerApp extends HandlebarsApplicationMixin(Applicati
     }
 
     let items = [];
+    let itemGroups = [];
     if ( selected?.mode === "custom" ) {
       const priceOverrides = selected.itemPrices ?? {};
       items = await Promise.all((selected.itemUuids ?? []).map(async uuid => {
+        const isCompendium = uuid.startsWith("Compendium.");
         const item = await fromUuid(uuid);
-        if ( !item ) return {uuid, name: game.i18n.localize("CRUCIBLE_SHOP.MissingItem"), img: "icons/svg/hazard.svg", price: 0, missing: true};
-        return {uuid, name: item.name, img: item.img, price: priceOverrides[uuid] ?? item.system?.price ?? 0};
+        if ( !item ) {
+          return {uuid, name: game.i18n.localize("CRUCIBLE_SHOP.MissingItem"), img: "icons/svg/hazard.svg",
+            price: 0, missing: true, isCompendium};
+        }
+        return {uuid, name: item.name, img: item.img, price: priceOverrides[uuid] ?? item.system?.price ?? 0,
+          isCompendium};
       }));
+
+      // Items stay wherever they actually live - compendium items are never copied into the
+      // world - so grouping here is purely a display convenience: it lets a GM see and browse
+      // "everything this shop pulled from a compendium" separately from items that live in the
+      // world (dragged in manually, or generated via Randomize), without moving any documents.
+      const compendiumItems = items.filter(i => i.isCompendium);
+      const worldItems = items.filter(i => !i.isCompendium);
+      itemGroups = [
+        compendiumItems.length ? {key: "compendium", label: game.i18n.localize("CRUCIBLE_SHOP.SourceCompendium"), items: compendiumItems} : null,
+        worldItems.length ? {key: "world", label: game.i18n.localize("CRUCIBLE_SHOP.SourceWorld"), items: worldItems} : null
+      ].filter(_ => _);
     }
 
     const users = game.users.filter(u => !u.isGM).map(u => ({id: u.id, name: u.name, active: u.active}));
@@ -129,6 +149,7 @@ export class CrucibleShopManagerApp extends HandlebarsApplicationMixin(Applicati
       selected,
       isDefaultShop: selected?.id === "default",
       items,
+      itemGroups,
       users,
       noUsers: !users.length,
       showPendingPanel,
@@ -403,6 +424,35 @@ export class CrucibleShopManagerApp extends HandlebarsApplicationMixin(Applicati
 /* -------------------------------------------- */
 
 /**
+ * Find (or create) the world Item folder that randomized items for a given shop should be filed
+ * into: a top-level "CrucibleShops" folder, with one child subfolder per shop, named after the
+ * shop. Reuses existing folders where they already exist rather than creating duplicates on every
+ * generate click.
+ * @param {{name: string}} shop  The shop being stocked.
+ * @returns {Promise<Folder|null>}  The shop's subfolder, or null if folder creation failed.
+ */
+static async #getOrCreateShopFolder(shop) {
+  try {
+    let root = game.folders.find(f => (f.type === "Item") && !f.folder && (f.name === ROOT_FOLDER_NAME));
+    if ( !root ) {
+      root = await Folder.implementation.create({name: ROOT_FOLDER_NAME, type: "Item", folder: null});
+    }
+
+    const shopName = shop.name || "Shop";
+    let sub = game.folders.find(f => (f.type === "Item") && (f.folder?.id === root.id) && (f.name === shopName));
+    if ( !sub ) {
+      sub = await Folder.implementation.create({name: shopName, type: "Item", folder: root.id});
+    }
+    return sub;
+  } catch (err) {
+    console.error("Crucible Shop | Failed to find or create shop item folder", err);
+    return null;
+  }
+}
+
+/* -------------------------------------------- */
+
+/**
  * Prompt the GM for randomization parameters (mirroring the system's own
  * `CrucibleItem.randomizeDialog` form, plus a quantity and multi-tier quality picker of our own)
  * and generate one or more random items to stock a custom shop. GM only, and only for custom
@@ -435,6 +485,9 @@ static async #onRandomizeItems() {
   const count = Math.min(Math.max(Number(data.count) || 1, 1), MAX_RANDOMIZE_COUNT);
   const qualityChoices = Array.from(data.quality ?? []);
 
+  // Resolve (or create) CrucibleShops/<Shop Name> once per batch rather than once per item.
+  const folder = await CrucibleShopManagerApp.#getOrCreateShopFolder(shop);
+
   shop.itemUuids ??= [];
   const generated = [];
   let failures = 0;
@@ -458,7 +511,9 @@ static async #onRandomizeItems() {
       });
 
       // Persist the SAME item we are about to price and post - not a freshly re-rolled one.
-      item = await Item.implementation.create(item.toObject(), {
+      const itemData = item.toObject();
+      if ( folder ) itemData.folder = folder.id;
+      item = await Item.implementation.create(itemData, {
         temporary: false
       });
     } catch (err) {

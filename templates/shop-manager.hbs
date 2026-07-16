@@ -64,10 +64,15 @@
         </button>
       </div>
       <ol class="shop-manager-item-list">
-        {{#each items as |item|}}
+        {{#each itemGroups as |group|}}
+        <li class="shop-item-group-header">{{group.label}}</li>
+        {{#each group.items as |item|}}
         <li class="shop-manager-item {{#if item.missing}}missing{{/if}}" data-uuid="{{item.uuid}}">
           <img src="{{item.img}}" alt="{{item.name}}"/>
           <span class="item-name" title="{{item.name}}">{{item.name}}</span>
+          {{#if item.isCompendium}}
+          <i class="fa-solid fa-boxes-stacked item-source-badge" data-tooltip="{{localize 'CRUCIBLE_SHOP.SourceCompendium'}}"></i>
+          {{/if}}
           {{#unless item.missing}}
           <crucible-currency class="item-price-input" data-uuid="{{item.uuid}}" value="{{item.price}}"
                               data-tooltip="{{localize 'CRUCIBLE_SHOP.ItemPrice'}}"></crucible-currency>
@@ -76,6 +81,7 @@
             <i class="fa-solid fa-xmark"></i>
           </a>
         </li>
+        {{/each}}
         {{else}}
         <li class="empty">{{localize "CRUCIBLE_SHOP.NoCustomItems"}}</li>
         {{/each}}
