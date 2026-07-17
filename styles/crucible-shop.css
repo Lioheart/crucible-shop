@@ -663,42 +663,6 @@
   font-size: 0.8rem;
 }
 
-.crucible-shop-manager .shop-manager-item .item-quality-badge {
-  flex: 0 0 auto;
-  align-self: center;
-  font-size: var(--font-size-11, 11px);
-  padding: 0 0.35rem;
-  border-radius: 999px;
-  white-space: nowrap;
-  background: rgba(255, 255, 255, 0.08);
-  color: #b0b0b0;
-}
-
-/* Colors loosely follow the system's own quality progression: fine (green) < superior (blue) <
-   masterwork (purple) - shoddy/standard are left uncolored since they never reach this badge
-   (getTags/quality only surfaces tiers above standard). */
-.crucible-shop-manager .shop-manager-item .item-quality-badge[data-quality="fine"] {
-  background: rgba(90, 200, 120, 0.18);
-  color: #6bd08a;
-}
-
-.crucible-shop-manager .shop-manager-item .item-quality-badge[data-quality="superior"] {
-  background: rgba(90, 150, 220, 0.18);
-  color: #7ab0ec;
-}
-
-.crucible-shop-manager .shop-manager-item .item-quality-badge[data-quality="masterwork"] {
-  background: rgba(180, 110, 230, 0.2);
-  color: #c48ff0;
-}
-
-.crucible-shop-manager .shop-manager-item .item-enchanted-badge {
-  flex: 0 0 auto;
-  align-self: center;
-  color: #c48ff0;
-  font-size: 0.8rem;
-}
-
 .crucible-shop-manager .shop-invite-panel {
   border-top: 1px solid rgba(255, 255, 255, 0.1);
   padding-top: 0.75rem;

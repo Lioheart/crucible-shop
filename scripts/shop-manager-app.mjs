@@ -104,14 +104,8 @@ export class CrucibleShopManagerApp extends HandlebarsApplicationMixin(Applicati
           return {uuid, name: game.i18n.localize("CRUCIBLE_SHOP.MissingItem"), img: "icons/svg/hazard.svg",
             price: 0, missing: true, isCompendium};
         }
-        const quality = item.system?.quality;
-        const QT = crucible?.CONST?.ITEM?.QUALITY_TIERS;
-        const qualityTier = (quality && (quality !== "standard")) ? QT?.[quality] : null;
-        const enchantment = item.system?.enchantment;
-        const enchanted = !!enchantment && (enchantment !== "mundane");
         return {uuid, name: item.name, img: item.img, price: priceOverrides[uuid] ?? item.system?.price ?? 0,
-          isCompendium, quality: qualityTier ? quality : null,
-          qualityLabel: qualityTier ? game.i18n.localize(qualityTier.label) : null, enchanted};
+          isCompendium};
       }));
 
       // Items stay wherever they actually live - compendium items are never copied into the
@@ -595,12 +589,6 @@ static async #promptRandomizeParams() {
     choices: Object.fromEntries(Object.values(QT).map(q => [q.id, _loc(q.label)]))
   }), {label: _loc("ITEM.RANDOMIZE.Quality")});
 
-  // Tiers with affix capacity are the ones the system's own randomizer will actually enchant with
-  // prefixes/suffixes - "shoddy"/"standard" never get affixes no matter how many retries. Quick
-  // way to guarantee a magic item without making the GM hunt through the quality tier list.
-  const magicTierIds = Object.values(QT).filter(q => q.capacity > 0).map(q => q.id);
-  const magicOnlyField = new fields.BooleanField({label: _loc("CRUCIBLE_SHOP.RandomizeMagicOnly")});
-
   // Same overflow risk as the compendium import dialog: itemTypes/quality are checkbox groups
   // whose length depends on the system's item type count and quality tier count, not fixed
   // markup, so a system with enough of either can push this past the viewport too. The whole
@@ -618,28 +606,11 @@ static async #promptRandomizeParams() {
     countField.toFormGroup({hint: _loc("CRUCIBLE_SHOP.RandomizeCountHint")}, {name: "count", value: 1}),
     baseUuidField.toFormGroup({}, {name: "baseUuid"}),
     itemTypesField.toFormGroup({stacked: true}, {name: "itemTypes", type: "checkboxes", value: Array.from(affixableTypes)}),
-    magicOnlyField.toFormGroup(
-      {hint: _loc("CRUCIBLE_SHOP.RandomizeMagicOnlyHint")},
-      {name: "magicOnly", value: false}
-    ),
     qualityField.toFormGroup(
       {stacked: true, hint: _loc("CRUCIBLE_SHOP.RandomizeQualityHint")},
       {name: "quality", type: "checkboxes", value: []}
     )
   );
-
-  // Checking "Magic Items Only" checks every affix-capable tier for the GM. Left enabled (rather
-  // than disabled) afterward - a disabled checkbox is omitted from FormData entirely, which would
-  // submit an empty quality set (i.e. "any tier", including non-magic ones) instead of the
-  // intended magic-only tiers. Leaving them enabled also lets the GM narrow the selection further
-  // (e.g. "masterwork only") after the quick-select.
-  const magicOnlyInput = scrollRegion.querySelector('[name="magicOnly"]');
-  const qualityCheckboxes = Array.from(scrollRegion.querySelectorAll('input[name="quality"]'));
-  magicOnlyInput?.addEventListener("change", () => {
-    if ( !magicOnlyInput.checked ) return;
-    for ( const box of qualityCheckboxes ) box.checked = magicTierIds.includes(box.value);
-  });
-
   const dialogHTML = document.createElement("div");
   dialogHTML.append(scrollRegion);
 

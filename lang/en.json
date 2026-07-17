@@ -60,13 +60,9 @@
     "RandomizeUnavailable": "This version of Crucible does not expose an item randomizer.",
     "RandomizeCount": "How Many?",
     "RandomizeCountHint": "Generate this many items in one go. Each one rolls its quality independently from the tiers checked below.",
-    "RandomizeMagicOnly": "Magic Items Only",
-    "RandomizeMagicOnlyHint": "Quick-select every quality tier capable of rolling affixes (prefixes/suffixes), so every generated item comes out magical.",
     "RandomizeQualityHint": "Leave unchecked to allow any quality tier. Check several to roll each item's quality from among them.",
     "RandomizeSuccess": "Added {count} generated item(s) to the shop.",
     "RandomizePartial": "Added {added} generated item(s) to the shop ({failed} failed - try loosening the filters).",
-    "RandomizeFailed": "Failed to generate any items. Try loosening the price range, item types, or quality filters.",
-    "Enchanted": "Enchanted",
 
     "ImportButton": "Add From Compendium",
     "ImportTitle": "Add Items From Compendium",

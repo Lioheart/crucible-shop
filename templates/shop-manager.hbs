@@ -70,12 +70,6 @@
         <li class="shop-manager-item {{#if item.missing}}missing{{/if}}" data-uuid="{{item.uuid}}">
           <img src="{{item.img}}" alt="{{item.name}}"/>
           <span class="item-name" title="{{item.name}}">{{item.name}}</span>
-          {{#if item.quality}}
-          <span class="item-quality-badge" data-quality="{{item.quality}}">{{item.qualityLabel}}</span>
-          {{/if}}
-          {{#if item.enchanted}}
-          <i class="fa-solid fa-sparkles item-enchanted-badge" data-tooltip="{{localize 'CRUCIBLE_SHOP.Enchanted'}}"></i>
-          {{/if}}
           {{#if item.isCompendium}}
           <i class="fa-solid fa-boxes-stacked item-source-badge" data-tooltip="{{localize 'CRUCIBLE_SHOP.SourceCompendium'}}"></i>
           {{/if}}
