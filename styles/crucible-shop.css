@@ -557,6 +557,26 @@
   flex: 0 0 auto;
 }
 
+/* -------------------------------------------- */
+/*  Compendium Import Dialog                     */
+/* -------------------------------------------- */
+
+/* Wraps the entire body of the compendium-import and randomize dialogs (checkbox groups plus
+   price fields), whose combined height scales with how much content a world has (compendium
+   pack count especially). The whole body scrolls as one unit - splitting scroll scope to just
+   the checkbox groups let a group get clipped mid-list with nothing visible hinting there was
+   more above the already-visible price fields. This lives on an inner wrapper one level below
+   the element passed to DialogV2 as `content`, since DialogV2 requires that outer element to
+   carry no attributes of its own. Foundry renders each dialog's footer as a sibling of the
+   `content` element rather than inside it, so it's unaffected by this max-height and the
+   OK/Import button stays visible and reachable regardless of how tall this region gets. */
+.crucible-shop-import-scroll {
+  max-height: 60vh;
+  overflow-y: auto;
+  padding-right: 0.25rem;
+  margin-bottom: 0.5rem;
+}
+
 .crucible-shop-manager .shop-manager-item-list {
   list-style: none;
   margin: 0;

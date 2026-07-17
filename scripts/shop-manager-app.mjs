@@ -543,20 +543,10 @@ static async #onRandomizeItems() {
   await saveShop(shop);
   await this.render({parts: ["manager"]});
 
-  // Post one chat card per generated item, matching the price players will actually pay.
-  for ( const item of generated ) {
-    try {
-      const enricherString = (typeof item.toLootEnricher === "function")
-        ? await item.toLootEnricher()
-        : `@UUID[${item.uuid}]{${item.name}}`;
-      await ChatMessage.implementation.create({
-        content: `<p>${enricherString}</p>`,
-        flavor: game.i18n.localize("ITEM.RANDOMIZE.Flavor", {type: game.i18n.localize(`TYPES.Item.${item.type}`)})
-      });
-    } catch (err) {
-      console.error("Crucible Shop | Failed to post a randomized item chat card", err);
-    }
-  }
+  // Deliberately no chat message here: these items are shop stock, not loot being handed to
+  // players. They already appear in the manager's item list immediately above, so a chat card
+  // would only spoil shop contents to the whole table (or, whispered, be redundant with the UI
+  // the GM is already looking at). Players see them once the GM actually invites them to the shop.
 
   if ( failures ) {
     ui.notifications.warn(
@@ -599,8 +589,18 @@ static async #promptRandomizeParams() {
     choices: Object.fromEntries(Object.values(QT).map(q => [q.id, _loc(q.label)]))
   }), {label: _loc("ITEM.RANDOMIZE.Quality")});
 
-  const dialogHTML = document.createElement("div");
-  dialogHTML.append(
+  // Same overflow risk as the compendium import dialog: itemTypes/quality are checkbox groups
+  // whose length depends on the system's item type count and quality tier count, not fixed
+  // markup, so a system with enough of either can push this past the viewport too. The whole
+  // form body (not just the checkbox groups) is the scroll region - splitting scroll scope to
+  // only wrap the checkboxes let a group get clipped mid-list with nothing on screen hinting
+  // there was more below it. Foundry renders the dialog's footer as a sibling of this content,
+  // so keeping it outside this div is what keeps the Generate button pinned and visible.
+  // DialogV2 requires the element passed as `content` to have no attributes of its own, so the
+  // scroll class goes on an inner wrapper instead of the outer element handed to `content`.
+  const scrollRegion = document.createElement("div");
+  scrollRegion.className = "crucible-shop-import-scroll";
+  scrollRegion.append(
     priceMinField.toFormGroup({}, {name: "priceMin", input: currencyInput, value: DEFAULT_PRICE_MIN}),
     priceMaxField.toFormGroup({}, {name: "priceMax", input: currencyInput, value: DEFAULT_PRICE_MAX}),
     countField.toFormGroup({hint: _loc("CRUCIBLE_SHOP.RandomizeCountHint")}, {name: "count", value: 1}),
@@ -611,9 +611,15 @@ static async #promptRandomizeParams() {
       {name: "quality", type: "checkboxes", value: []}
     )
   );
+  const dialogHTML = document.createElement("div");
+  dialogHTML.append(scrollRegion);
 
   return foundry.applications.api.DialogV2.prompt({
-    window: {title: _loc("ITEM.RANDOMIZE.Title"), icon: "fa-wand-sparkles"},
+    window: {title: _loc("ITEM.RANDOMIZE.Title"), icon: "fa-wand-sparkles", resizable: true},
+    // Auto rather than a forced fixed height: the inner .crucible-shop-import-scroll div already
+    // caps its own growth at 60vh, so the window can just size to whatever content there is
+    // (short on a system with few item types/qualities, capped-and-scrollable on one with many)
+    // instead of always opening at a fixed height that leaves empty space below a short list.
     position: {width: 520, height: "auto"},
     content: dialogHTML,
     ok: {
@@ -723,8 +729,21 @@ static async #promptCompendiumImportParams() {
   const priceMaxField = new fields.NumberField({label: _loc("ITEM.RANDOMIZE.PriceMax"), initial: DEFAULT_PRICE_MAX});
   const priceOnlyField = new fields.BooleanField({label: _loc("CRUCIBLE_SHOP.ImportPriceOnly")});
 
-  const dialogHTML = document.createElement("div");
-  dialogHTML.append(
+  // The three checkbox groups below (packs, item types, quality tiers) scale with how much
+  // content this world has - a world with a dozen+ compendium packs can easily produce a dialog
+  // taller than the viewport. With height: "auto" and no resizing, that pushed the Import button
+  // off the bottom of the screen with no way to reach it. Fixing that: the whole form body (not
+  // just the checkbox groups) is the scroll region - splitting scroll scope to only the checkbox
+  // groups let a group (e.g. Quality Tier) get clipped mid-list with the price fields/footer
+  // already visible below it, giving no hint there was more to scroll to above them. Foundry
+  // renders the dialog's footer as a sibling of this content, so keeping it outside this div is
+  // what keeps the Import button pinned and visible; the window itself can also be resized as a
+  // fallback.
+  // DialogV2 requires the element passed as `content` to have no attributes of its own, so the
+  // scroll class goes on an inner wrapper instead of the outer element handed to `content`.
+  const scrollRegion = document.createElement("div");
+  scrollRegion.className = "crucible-shop-import-scroll";
+  scrollRegion.append(
     packsField.toFormGroup(
       {stacked: true, hint: _loc("CRUCIBLE_SHOP.ImportPacksHint")},
       {name: "packs", type: "checkboxes",
@@ -743,9 +762,15 @@ static async #promptCompendiumImportParams() {
     priceMaxField.toFormGroup({}, {name: "priceMax", input: currencyInput, value: DEFAULT_PRICE_MAX}),
     priceOnlyField.toFormGroup({hint: _loc("CRUCIBLE_SHOP.ImportPriceOnlyHint")}, {name: "priceOnly", value: true})
   );
+  const dialogHTML = document.createElement("div");
+  dialogHTML.append(scrollRegion);
 
   return foundry.applications.api.DialogV2.prompt({
-    window: {title: _loc("CRUCIBLE_SHOP.ImportTitle"), icon: "fa-solid fa-boxes-stacked"},
+    window: {title: _loc("CRUCIBLE_SHOP.ImportTitle"), icon: "fa-solid fa-boxes-stacked", resizable: true},
+    // Auto rather than a forced fixed height: the inner .crucible-shop-import-scroll div already
+    // caps its own growth at 60vh, so the window can just size to whatever content there is
+    // (short on a world with few compendiums, capped-and-scrollable on one with many) instead of
+    // always opening at a fixed height that leaves empty space below a short list.
     position: {width: 520, height: "auto"},
     content: dialogHTML,
     ok: {

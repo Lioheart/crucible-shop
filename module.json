@@ -2,7 +2,7 @@
   "id": "crucible-shop",
   "title": "Crucible Shop",
   "description": "<p>Adds one or more shops to the Crucible system. Players can spend an actor's real currency on real inventory items, staged into a cart and only applied when they confirm - and can sell items back from their own inventory for a GM-configured percentage of their price. Each shop has independent Buy Price and Sell Price percentages (e.g. buy at 80% of value, sell at 120% of value) that can each be set above or below 100%, and can optionally require a GM to approve every buy/sell before it applies - via a whispered chat message with Approve/Deny buttons, a Pending Requests panel in the Shop Manager, or both at once (a module setting controls which). GMs invite players to shop via a chat button, and can define any number of shops - the built-in default draws from the system's Equipment compendium tree (the same one used during Hero character creation), while custom shops are stocked by hand-picking items and are automatically restocked with anything players sell into them.</p>",
-  "version": "0.0.5",
+  "version": "0.0.6",
   "compatibility": {
     "minimum": "14",
     "verified": "14"
