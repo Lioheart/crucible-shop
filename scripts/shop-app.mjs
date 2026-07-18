@@ -1,4 +1,4 @@
-import {MODULE_ID, applyPurchase, applySell, requestTransactionApproval} from "./crucible-shop.mjs";
+import {MODULE_ID, applyPurchase, applySell, requestTransactionApproval, recordTransaction} from "./crucible-shop.mjs";
 
 const {ApplicationV2, HandlebarsApplicationMixin} = foundry.applications.api;
 
@@ -545,6 +545,7 @@ export class CrucibleShopApp extends HandlebarsApplicationMixin(ApplicationV2) {
     }
 
     const result = await applySell(this.actor, this.shop, entries);
+    await recordTransaction({kind: "sell", shop: this.shop, actor: this.actor, entries, result});
     ui.notifications.info(game.i18n.format(
       "CRUCIBLE_SHOP.SellSuccess", {count: result.count, earned: CrucibleShopApp.formatCurrency(result.earned)}));
     this._state.sellCart = {};
@@ -587,6 +588,7 @@ export class CrucibleShopApp extends HandlebarsApplicationMixin(ApplicationV2) {
       ui.notifications.error(game.i18n.localize("CRUCIBLE_SHOP.PurchaseFailed"));
       return;
     }
+    await recordTransaction({kind: "buy", shop: this.shop, actor: this.actor, entries, result});
 
     ui.notifications.info(game.i18n.format(
       "CRUCIBLE_SHOP.PurchaseSuccess", {count: result.count, spent: CrucibleShopApp.formatCurrency(result.spent)}));

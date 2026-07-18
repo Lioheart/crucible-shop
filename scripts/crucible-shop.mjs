@@ -84,17 +84,35 @@ Hooks.once("ready", () => {
     return;
   }
 
-  // Bind clicks on "open shop" and transaction approve/deny chat buttons, in both the modern
+  // Bind clicks on "open shop" and transaction approve/deny/undo chat buttons, in both the modern
   // (v13+) and legacy chat render hooks.
   Hooks.on("renderChatMessageHTML", (message, html) => bindChatButtons(message, html));
   Hooks.on("renderChatMessage", (message, html) => bindChatButtons(message, html[0] ?? html));
 
+  // Let a GM undo a completed (non-pending) shop transaction from the chat log's right-click
+  // context menu, the same way Crucible's own "Reverse Action" option works for its own actions.
+  Hooks.on("getChatMessageContextOptions", (_app, options) => {
+    options.push({
+      label: game.i18n.localize("CRUCIBLE_SHOP.UndoTransaction"),
+      icon: '<i class="fa-solid fa-rotate-left"></i>',
+      visible: li => {
+        if ( !game.user.isGM ) return false;
+        const message = game.messages.get(li.dataset.messageId);
+        const history = message?.getFlag(MODULE_ID, "history");
+        return !!history && !history.undone;
+      },
+      onClick: (_e, li) => undoTransaction(li.dataset.messageId)
+    });
+  });
+
   // A non-GM seller can't write the world-scoped "shops" setting themselves, so a sale to a
   // custom shop is whispered to an online GM as a quiet chat message; whichever GM client sees it
   // first performs the actual restock. No sockets required - same pattern as the invite buttons.
-  // This also doubles as the signal to refresh any open Shop Manager's Pending Requests panel.
+  // This also doubles as the signal to refresh any open Shop Manager's Pending Requests/History panel.
   Hooks.on("createChatMessage", message => {
-    if ( message.getFlag(MODULE_ID, "transactionRequest") ) refreshOpenManagers();
+    if ( message.getFlag(MODULE_ID, "transactionRequest") || message.getFlag(MODULE_ID, "history") ) {
+      refreshOpenManagers();
+    }
     scheduleMessageExpiry(message);
     if ( !game.user.isGM ) return;
     const request = message.getFlag(MODULE_ID, "sellRestock");
@@ -121,7 +139,10 @@ Hooks.once("ready", () => {
   // it) rather than through a socket. Also refreshes any open Shop Manager panel.
   Hooks.on("updateChatMessage", message => {
     const request = message.getFlag(MODULE_ID, "transactionRequest");
-    if ( !request ) return;
+    if ( !request ) {
+      if ( message.getFlag(MODULE_ID, "history") ) refreshOpenManagers();
+      return;
+    }
     refreshOpenManagers();
     if ( (request.status === "pending") || (request.userId !== game.user.id) ) return;
     for ( const app of foundry.applications.instances.values() ) {
@@ -144,6 +165,9 @@ Hooks.once("ready", () => {
     requestTransactionApproval,
     resolveTransactionRequest,
     getPendingTransactionRequests,
+    recordTransaction,
+    undoTransaction,
+    getTransactionHistory,
     CrucibleShopApp,
     CrucibleShopManagerApp
   };
@@ -317,6 +341,8 @@ export async function applyPurchase(actor, entries) {
 
   const toCreate = [];
   const toUpdate = [];
+  const createQuantities = []; // Parallel to toCreate: how much quantity each created doc represents.
+  const updateChanges = [];    // {itemId, quantityDelta} for items whose quantity was incremented.
   let count = 0;
   for ( const {item, uuid, quantity} of resolved ) {
     count += quantity;
@@ -326,6 +352,7 @@ export async function applyPurchase(actor, entries) {
       const existing = actor.items.find(i => i.getFlag(MODULE_ID, "sourceUuid") === uuid);
       if ( existing ) {
         toUpdate.push({_id: existing.id, "system.quantity": existing.system.quantity + quantity});
+        updateChanges.push({itemId: existing.id, quantityDelta: quantity});
         continue;
       }
       const itemData = game.items.fromCompendium?.(item) ?? item.toObject();
@@ -333,6 +360,7 @@ export async function applyPurchase(actor, entries) {
       foundry.utils.setProperty(itemData, "system.quantity", quantity);
       foundry.utils.setProperty(itemData, `flags.${MODULE_ID}.sourceUuid`, uuid);
       toCreate.push(itemData);
+      createQuantities.push(quantity);
     }
     else {
       for ( let i = 0; i < quantity; i++ ) {
@@ -340,15 +368,24 @@ export async function applyPurchase(actor, entries) {
         delete itemData._id;
         foundry.utils.setProperty(itemData, `flags.${MODULE_ID}.sourceUuid`, uuid);
         toCreate.push(itemData);
+        createQuantities.push(1);
       }
     }
   }
 
   await actor.update({"system.currency": currency - spent});
-  if ( toCreate.length ) await actor.createEmbeddedDocuments("Item", toCreate);
+  let created = [];
+  if ( toCreate.length ) created = await actor.createEmbeddedDocuments("Item", toCreate);
   if ( toUpdate.length ) await actor.updateEmbeddedDocuments("Item", toUpdate);
 
-  return {count, spent};
+  // Snapshot exactly what changed so an undo can reverse it: newly-created items get deleted
+  // outright, quantity increments on existing stacks get decremented back down.
+  const itemChanges = [
+    ...created.map((doc, i) => ({itemId: doc.id, created: true, quantityDelta: createQuantities[i]})),
+    ...updateChanges.map(c => ({...c, created: false}))
+  ];
+
+  return {count, spent, undo: {currencySpent: spent, itemChanges}};
 }
 
 /**
@@ -363,6 +400,7 @@ export async function applySell(actor, shop, entries) {
   const toDelete = [];
   const toUpdate = [];
   const restock = [];
+  const itemChanges = [];
   let count = 0;
   let earned = 0;
   for ( const {itemId, quantity, unitPrice} of entries ) {
@@ -371,14 +409,18 @@ export async function applySell(actor, shop, entries) {
     if ( !item ) continue;
     count += quantity;
     earned += unitPrice * quantity;
-    restock.push({itemData: item.toObject(), unitPrice});
+    const snapshot = item.toObject();
+    restock.push({itemData: snapshot, unitPrice});
 
     const owned = item.system.quantity ?? 1;
     if ( (item.system.quantity != null) && (quantity < owned) ) {
       toUpdate.push({_id: item.id, "system.quantity": owned - quantity});
+      itemChanges.push({itemId: item.id, deleted: false, quantityDelta: quantity});
     }
     else {
       toDelete.push(item.id);
+      // Snapshot the full item so an undo can recreate it exactly as it was before the sale.
+      itemChanges.push({itemId: item.id, deleted: true, quantityDelta: quantity, snapshot});
     }
   }
 
@@ -386,9 +428,18 @@ export async function applySell(actor, shop, entries) {
   await actor.update({"system.currency": currency + earned});
   if ( toUpdate.length ) await actor.updateEmbeddedDocuments("Item", toUpdate);
   if ( toDelete.length ) await actor.deleteEmbeddedDocuments("Item", toDelete);
-  if ( shop.mode === "custom" ) await restockCustomShop(shop.id, restock);
 
-  return {count, earned};
+  // A custom shop gets restocked with what was sold. This isn't tracked precisely enough for undo
+  // to strip it back out again (the restock may happen asynchronously on a different GM's client -
+  // see restockCustomShop below) - undo only reverses what happened to the actor. The chat/history
+  // card flags this so a GM can manually pull the restocked item back out if they want to.
+  let restocked = false;
+  if ( shop.mode === "custom" ) {
+    await restockCustomShop(shop.id, restock);
+    restocked = true;
+  }
+
+  return {count, earned, undo: {currencyEarned: earned, itemChanges, restocked}};
 }
 
 /**
@@ -477,8 +528,9 @@ export async function resolveTransactionRequest(messageId, decision) {
 
   let status = decision;
   let result = null;
+  let actor = null;
   if ( decision === "approved" ) {
-    const actor = await fromUuid(request.actorUuid);
+    actor = await fromUuid(request.actorUuid);
     if ( !actor ) status = "failed";
     else {
       try {
@@ -495,10 +547,21 @@ export async function resolveTransactionRequest(messageId, decision) {
   }
 
   const resolved = {...request, status, result};
-  await message.update({
-    content: renderTransactionCard(resolved),
-    [`flags.${MODULE_ID}.transactionRequest`]: resolved
-  });
+  const updateData = {[`flags.${MODULE_ID}.transactionRequest`]: resolved};
+
+  // An approved request folds into a history/undo entry on this same message rather than posting
+  // a second card - the pending-request card simply becomes the receipt once it goes through.
+  if ( (status === "approved") && actor ) {
+    const history = buildHistory({kind: request.kind, shop: getShop(request.shopId), actor,
+      entries: request.entries, result});
+    updateData.content = renderHistoryCard(history);
+    updateData[`flags.${MODULE_ID}.history`] = history;
+  }
+  else {
+    updateData.content = renderTransactionCard(resolved);
+  }
+
+  await message.update(updateData);
 }
 
 /**
@@ -551,6 +614,226 @@ function renderTransactionCard(request) {
       <p>${game.i18n.format(titleKey, {user: userName, actor: actorName, shop: shopName})}</p>
       <ul class="transaction-items">${rows}</ul>
       <p class="transaction-total">${game.i18n.format(totalKey, {total: CrucibleShopApp.formatCurrency(total)})}</p>
+      ${statusHtml}
+    </div>`;
+}
+
+/* -------------------------------------------- */
+/*  Shopping History & Undo                      */
+/* -------------------------------------------- */
+
+/**
+ * Build the plain-data history record for a just-completed transaction.
+ * @param {{kind: "buy"|"sell", shop: object, actor: Actor, entries: object[],
+ *   result: {spent: number}|{earned: number}}} data
+ * @returns {object}
+ */
+function buildHistory({kind, shop, actor, entries, result}) {
+  return {
+    id: foundry.utils.randomID(),
+    kind,
+    shopId: shop.id,
+    shopName: shop.name,
+    actorUuid: actor.uuid,
+    actorName: actor.name,
+    userId: game.user.id,
+    userName: game.user.name,
+    entries,
+    total: kind === "buy" ? result.spent : result.earned,
+    timestamp: Date.now(),
+    undone: false,
+    restockNote: (kind === "sell") && !!result.undo?.restocked,
+    undoData: result.undo
+  };
+}
+
+/**
+ * Record a completed (instant, no-approval-required) transaction as a whispered chat message, so
+ * it shows up in Shopping History and can later be undone by a GM. Approval-required transactions
+ * don't call this directly - resolveTransactionRequest folds the same history data into the
+ * existing request message instead of posting a second card.
+ * @param {{kind: "buy"|"sell", shop: object, actor: Actor, entries: object[], result: object}} data
+ * @returns {Promise<ChatMessage>}
+ */
+export async function recordTransaction({kind, shop, actor, entries, result}) {
+  const history = buildHistory({kind, shop, actor, entries, result});
+  const gmIds = game.users.filter(u => u.isGM && u.active).map(u => u.id);
+  const whisper = Array.from(new Set([...gmIds, game.user.id]));
+  return ChatMessage.create({
+    content: renderHistoryCard(history),
+    whisper,
+    speaker: {alias: actor.name},
+    flags: {[MODULE_ID]: {history}}
+  });
+}
+
+/**
+ * Find every recorded transaction, optionally scoped to one shop, most recent first. Used by the
+ * Shop Manager's Transaction History panel.
+ * @param {string} [shopId]
+ * @param {object} [options]
+ * @param {number} [options.limit=50]   Maximum number of entries to return. 0/null for no limit.
+ * @returns {{messageId: string, history: object}[]}
+ */
+export function getTransactionHistory(shopId=null, {limit=50}={}) {
+  const results = [];
+  for ( const message of game.messages ) {
+    const history = message.getFlag(MODULE_ID, "history");
+    if ( !history ) continue;
+    if ( shopId && (history.shopId !== shopId) ) continue;
+    results.push({messageId: message.id, history});
+  }
+  results.sort((a, b) => b.history.timestamp - a.history.timestamp);
+  return limit ? results.slice(0, limit) : results;
+}
+
+/**
+ * Reverse a previously-recorded purchase: refund the currency spent and undo each item change -
+ * deleting items the purchase created, and stepping items it stacked onto back down.
+ * @param {Actor} actor
+ * @param {{currencySpent: number, itemChanges: object[]}} undoData
+ * @returns {Promise<void>}
+ */
+async function _undoPurchase(actor, undoData) {
+  const {currencySpent, itemChanges} = undoData;
+  const toDelete = [];
+  const toUpdate = [];
+  for ( const change of itemChanges ) {
+    const item = actor.items.get(change.itemId);
+    if ( !item ) continue; // Already gone or otherwise changed since - skip it gracefully.
+    if ( change.created ) {
+      toDelete.push(item.id);
+      continue;
+    }
+    const remaining = (item.system.quantity ?? change.quantityDelta) - change.quantityDelta;
+    if ( remaining > 0 ) toUpdate.push({_id: item.id, "system.quantity": remaining});
+    else toDelete.push(item.id);
+  }
+
+  const currency = actor.system.currency ?? 0;
+  await actor.update({"system.currency": currency + currencySpent});
+  if ( toUpdate.length ) await actor.updateEmbeddedDocuments("Item", toUpdate);
+  if ( toDelete.length ) await actor.deleteEmbeddedDocuments("Item", toDelete);
+}
+
+/**
+ * Reverse a previously-recorded sale: claw back the currency earned and undo each item change -
+ * recreating items the sale deleted from their snapshot, and stepping partially-sold stacks back
+ * up. Does not attempt to remove any restock this sale may have generated in a custom shop - see
+ * the "restocked" note captured on the history entry.
+ * @param {Actor} actor
+ * @param {{currencyEarned: number, itemChanges: object[]}} undoData
+ * @returns {Promise<void>}
+ */
+async function _undoSell(actor, undoData) {
+  const {currencyEarned, itemChanges} = undoData;
+  const toCreate = [];
+  const toUpdate = [];
+  for ( const change of itemChanges ) {
+    if ( change.deleted ) {
+      const data = foundry.utils.deepClone(change.snapshot);
+      delete data._id;
+      toCreate.push(data);
+      continue;
+    }
+    const item = actor.items.get(change.itemId);
+    if ( !item ) {
+      console.warn(`${MODULE_ID} | Could not restore item ${change.itemId} on undo - it no longer exists.`);
+      continue;
+    }
+    toUpdate.push({_id: item.id, "system.quantity": (item.system.quantity ?? 0) + change.quantityDelta});
+  }
+
+  const currency = actor.system.currency ?? 0;
+  await actor.update({"system.currency": Math.max(0, currency - currencyEarned)});
+  if ( toCreate.length ) await actor.createEmbeddedDocuments("Item", toCreate);
+  if ( toUpdate.length ) await actor.updateEmbeddedDocuments("Item", toUpdate);
+}
+
+/**
+ * Undo a completed shop transaction: reverses the currency and item changes it made to the actor.
+ * GM only. Safe to call only once per transaction - already-undone entries are rejected.
+ * @param {string} messageId   The chat message carrying the transaction's history flag.
+ * @returns {Promise<void>}
+ */
+export async function undoTransaction(messageId) {
+  if ( !game.user.isGM ) {
+    ui.notifications.warn(game.i18n.localize("CRUCIBLE_SHOP.GMOnly"));
+    return;
+  }
+  const message = game.messages.get(messageId);
+  const history = message?.getFlag(MODULE_ID, "history");
+  if ( !history ) return;
+  if ( history.undone ) {
+    ui.notifications.warn(game.i18n.localize("CRUCIBLE_SHOP.AlreadyUndone"));
+    return;
+  }
+
+  const actor = await fromUuid(history.actorUuid);
+  if ( !actor ) {
+    ui.notifications.error(game.i18n.localize("CRUCIBLE_SHOP.UndoNoActor"));
+    return;
+  }
+
+  try {
+    if ( history.kind === "buy" ) await _undoPurchase(actor, history.undoData);
+    else await _undoSell(actor, history.undoData);
+  } catch(err) {
+    console.error(`${MODULE_ID} | Failed to undo a shop transaction`, err);
+    ui.notifications.error(game.i18n.localize("CRUCIBLE_SHOP.UndoFailed"));
+    return;
+  }
+
+  const undone = {...history, undone: true, undoneByName: game.user.name, undoneAt: Date.now()};
+  await message.update({
+    content: renderHistoryCard(undone),
+    [`flags.${MODULE_ID}.history`]: undone
+  });
+  ui.notifications.info(game.i18n.format("CRUCIBLE_SHOP.UndoSuccess", {actor: actor.name}));
+}
+
+/**
+ * Render the chat card HTML for a completed transaction: an itemized receipt with either an Undo
+ * button (GM, not yet undone) or an "undone" status line.
+ * @param {object} history
+ * @returns {string}
+ */
+function renderHistoryCard(history) {
+  const {kind, shopName, actorName, userName, entries, total, undone, undoneByName, restockNote} = history;
+  const isBuy = kind === "buy";
+
+  const rows = entries.map(entry => {
+    const unitPrice = isBuy ? entry.price : entry.unitPrice;
+    return `<li>${entry.name} <span class="qty">x${entry.quantity}</span> - ${CrucibleShopApp.formatCurrency(unitPrice)}</li>`;
+  }).join("");
+
+  let statusHtml;
+  if ( undone ) {
+    statusHtml = `<p class="transaction-status undone">
+      <i class="fa-solid fa-rotate-left"></i> ${game.i18n.format("CRUCIBLE_SHOP.TransactionUndone", {user: undoneByName})}</p>`;
+  }
+  else {
+    // Always baked into the content regardless of who authored it - bindChatButtons hides this
+    // per-viewer for non-GMs, the same way the approve/deny buttons above are handled.
+    statusHtml = `
+      <div class="transaction-actions">
+        <button type="button" class="undo" data-action="crucible-shop-undo">
+          <i class="fa-solid fa-rotate-left"></i> ${game.i18n.localize("CRUCIBLE_SHOP.Undo")}
+        </button>
+      </div>`;
+  }
+
+  const noteHtml = restockNote ? `<p class="transaction-note">${game.i18n.localize("CRUCIBLE_SHOP.RestockNote")}</p>` : "";
+
+  const titleKey = isBuy ? "CRUCIBLE_SHOP.HistoryBuyTitle" : "CRUCIBLE_SHOP.HistorySellTitle";
+  const totalKey = isBuy ? "CRUCIBLE_SHOP.TotalCost" : "CRUCIBLE_SHOP.TotalPayout";
+
+  return `
+    <div class="crucible-shop-transaction crucible-shop-history status-${undone ? "undone" : "complete"}">
+      <p>${game.i18n.format(titleKey, {user: userName, actor: actorName, shop: shopName})}</p>
+      <ul class="transaction-items">${rows}</ul>
+      <p class="transaction-total">${game.i18n.format(totalKey, {total: CrucibleShopApp.formatCurrency(total)})}</p>
+      ${noteHtml}
       ${statusHtml}
     </div>`;
 }
@@ -740,6 +1023,18 @@ function bindChatButtons(message, html) {
     button.addEventListener("click", async (event) => {
       event.preventDefault();
       await resolveTransactionRequest(message.id, decision);
+    });
+  }
+
+  const undoButtons = html.querySelectorAll?.('[data-action="crucible-shop-undo"]') ?? [];
+  for ( const button of undoButtons ) {
+    if ( button.dataset.shopBound ) continue;
+    button.dataset.shopBound = "true";
+    // Only a GM can act on this - everyone else simply doesn't see it.
+    if ( !game.user.isGM ) { button.style.display = "none"; continue; }
+    button.addEventListener("click", async (event) => {
+      event.preventDefault();
+      await undoTransaction(message.id);
     });
   }
 }

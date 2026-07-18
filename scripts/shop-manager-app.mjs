@@ -1,5 +1,5 @@
 import {MODULE_ID, getShops, saveShop, deleteShop, inviteToShop, openShop, getPendingTransactionRequests,
-  resolveTransactionRequest} from "./crucible-shop.mjs";
+  resolveTransactionRequest, getTransactionHistory, undoTransaction} from "./crucible-shop.mjs";
 import {CrucibleShopApp} from "./shop-app.mjs";
 
 const {ApplicationV2, HandlebarsApplicationMixin} = foundry.applications.api;
@@ -70,10 +70,10 @@ export class CrucibleShopManagerApp extends HandlebarsApplicationMixin(Applicati
   };
 
   /**
-   * Which shop is currently selected in the left-hand list, and which of the three lower panels
-   * (items / invite / pending) is currently expanded to fill the available space - the other two
-   * collapse down to just their header, accordion-style.
-   * @type {{selectedShopId: string, expandedPanel: "items"|"invite"|"pending"}}
+   * Which shop is currently selected in the left-hand list, and which of the lower panels
+   * (items / invite / pending / history) is currently expanded to fill the available space - the
+   * others collapse down to just their header, accordion-style.
+   * @type {{selectedShopId: string, expandedPanel: "items"|"invite"|"pending"|"history"}}
    */
   _state = {selectedShopId: "default", expandedPanel: "items"};
 
@@ -153,6 +153,24 @@ export class CrucibleShopManagerApp extends HandlebarsApplicationMixin(Applicati
       })
       : [];
 
+    const historyEntries = selected
+      ? getTransactionHistory(selected.id, {limit: 50}).map(({messageId, history}) => {
+        const isBuy = history.kind === "buy";
+        return {
+          messageId,
+          kind: history.kind,
+          isBuy,
+          userName: history.userName,
+          actorName: history.actorName,
+          total: CrucibleShopApp.formatCurrency(history.total),
+          timestamp: new Date(history.timestamp).toLocaleString(),
+          entries: history.entries.map(e => ({name: e.name, img: e.img, quantity: e.quantity})),
+          undone: history.undone,
+          undoneByName: history.undoneByName
+        };
+      })
+      : [];
+
     return {
       shops: shopList.map(s => ({...s, active: s.id === this._state.selectedShopId})),
       selected,
@@ -164,6 +182,8 @@ export class CrucibleShopManagerApp extends HandlebarsApplicationMixin(Applicati
       showPendingPanel,
       pendingRequests,
       noPendingRequests: showPendingPanel && !pendingRequests.length,
+      historyEntries,
+      noHistoryEntries: !historyEntries.length,
       expandedPanel: this._state.expandedPanel
     };
   }
@@ -200,6 +220,9 @@ export class CrucibleShopManagerApp extends HandlebarsApplicationMixin(Applicati
 
     const pendingList = this.element.querySelector(".pending-requests-list");
     pendingList?.addEventListener("click", this.#onClickPendingRequest.bind(this));
+
+    const historyList = this.element.querySelector(".history-entries-list");
+    historyList?.addEventListener("click", this.#onClickHistoryEntry.bind(this));
   }
 
   /* -------------------------------------------- */
@@ -330,6 +353,21 @@ export class CrucibleShopManagerApp extends HandlebarsApplicationMixin(Applicati
     const messageId = button.closest("[data-message-id]")?.dataset.messageId;
     if ( !messageId ) return;
     await resolveTransactionRequest(messageId, action === "approveRequest" ? "approved" : "denied");
+    await this.render({parts: ["manager"]});
+  }
+
+  /* -------------------------------------------- */
+
+  /**
+   * Handle the GM clicking Undo on an entry in the Transaction History panel.
+   * @param {MouseEvent} event
+   */
+  async #onClickHistoryEntry(event) {
+    const button = event.target.closest('[data-action="undoHistoryEntry"]');
+    if ( !button ) return;
+    const messageId = button.closest("[data-message-id]")?.dataset.messageId;
+    if ( !messageId ) return;
+    await undoTransaction(messageId);
     await this.render({parts: ["manager"]});
   }
 

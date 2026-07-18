@@ -86,6 +86,21 @@
   color: #e07a7a;
 }
 
+/* Completed transaction ("receipt") card, whispered for shopping history and undo. */
+.crucible-shop-transaction .transaction-note {
+  font-size: 0.85em;
+  opacity: 0.75;
+  font-style: italic;
+}
+
+.crucible-shop-transaction .transaction-actions .undo {
+  color: #e0c26f;
+}
+
+.crucible-shop-transaction.status-undone .transaction-status.undone {
+  color: #e0c26f;
+}
+
 .crucible-shop .shop-header {
   display: flex;
   align-items: center;
@@ -616,6 +631,62 @@
 
 .crucible-shop-manager .pending-request-actions .deny {
   color: #e07a7a;
+}
+
+.crucible-shop-manager .history-entries-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.crucible-shop-manager .history-entry {
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 4px;
+  padding: 0.4rem 0.5rem;
+}
+
+.crucible-shop-manager .history-entry.undone {
+  opacity: 0.6;
+}
+
+.crucible-shop-manager .history-entry-summary {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-weight: bold;
+}
+
+.crucible-shop-manager .history-entry-summary span:not(.history-entry-timestamp) {
+  flex: 1;
+}
+
+.crucible-shop-manager .history-entry-timestamp {
+  font-weight: normal;
+  font-size: 0.8em;
+  opacity: 0.6;
+  white-space: nowrap;
+}
+
+.crucible-shop-manager .history-entry-items {
+  margin: 0.25rem 0;
+  padding-left: 1.25rem;
+  opacity: 0.85;
+  font-size: 0.9em;
+}
+
+.crucible-shop-manager .history-entry-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.crucible-shop-manager .history-entry-actions .undo {
+  color: #e0c26f;
+}
+
+.crucible-shop-manager .history-entry-undone-badge {
+  font-size: 0.85em;
+  opacity: 0.75;
+  color: #e0c26f;
 }
 
 .crucible-shop-manager .shop-item-drop-toolbar {

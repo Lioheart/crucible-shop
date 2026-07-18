@@ -178,6 +178,52 @@
       </div>
       {{/if}}
 
+      <div class="shop-panel {{#if (eq expandedPanel "history")}}expanded{{/if}}" data-panel="history">
+        <div class="shop-panel-header" data-action="togglePanel" data-panel="history" role="button" tabindex="0">
+          <h3><i class="fa-solid fa-chevron-right panel-chevron"></i> {{localize "CRUCIBLE_SHOP.TransactionHistory"}}
+            {{#unless noHistoryEntries}}<span class="panel-count">{{historyEntries.length}}</span>{{/unless}}</h3>
+        </div>
+        <div class="shop-panel-body">
+          {{#if noHistoryEntries}}
+          <p class="hint">{{localize "CRUCIBLE_SHOP.NoTransactionHistory"}}</p>
+          {{else}}
+          <ol class="history-entries-list">
+            {{#each historyEntries as |entry|}}
+            <li class="history-entry {{#if entry.undone}}undone{{/if}}" data-message-id="{{entry.messageId}}">
+              <div class="history-entry-summary">
+                <i class="fa-solid {{#if entry.isBuy}}fa-cart-shopping{{else}}fa-hand-holding-dollar{{/if}}"></i>
+                <span>
+                  {{#if entry.isBuy}}
+                  {{localize "CRUCIBLE_SHOP.HistoryBuySummary" user=entry.userName actor=entry.actorName total=entry.total}}
+                  {{else}}
+                  {{localize "CRUCIBLE_SHOP.HistorySellSummary" user=entry.userName actor=entry.actorName total=entry.total}}
+                  {{/if}}
+                </span>
+                <span class="history-entry-timestamp">{{entry.timestamp}}</span>
+              </div>
+              <ul class="history-entry-items">
+                {{#each entry.entries as |item|}}
+                <li>{{item.name}} <span class="qty">x{{item.quantity}}</span></li>
+                {{/each}}
+              </ul>
+              <div class="history-entry-actions">
+                {{#if entry.undone}}
+                <span class="history-entry-undone-badge">
+                  <i class="fa-solid fa-rotate-left"></i> {{localize "CRUCIBLE_SHOP.TransactionUndone" user=entry.undoneByName}}
+                </span>
+                {{else}}
+                <button type="button" class="undo" data-action="undoHistoryEntry">
+                  <i class="fa-solid fa-rotate-left"></i> {{localize "CRUCIBLE_SHOP.Undo"}}
+                </button>
+                {{/if}}
+              </div>
+            </li>
+            {{/each}}
+          </ol>
+          {{/if}}
+        </div>
+      </div>
+
     </div>
 
     {{/if}}

@@ -122,6 +122,22 @@
     "PendingRequests": "Pending Requests",
     "NoPendingRequests": "Nothing waiting on approval for this shop.",
     "PendingBuySummary": "{user} wants to buy for {actor} - {total}",
-    "PendingSellSummary": "{user} wants to sell for {actor} - {total}"
+    "PendingSellSummary": "{user} wants to sell for {actor} - {total}",
+
+    "HistoryBuyTitle": "{user} bought from {shop} for {actor}.",
+    "HistorySellTitle": "{user} sold to {shop} for {actor}.",
+    "Undo": "Undo",
+    "UndoTransaction": "Undo Shop Transaction",
+    "TransactionUndone": "Undone by {user}.",
+    "AlreadyUndone": "This transaction has already been undone.",
+    "GMOnly": "Only the GM can undo a shop transaction.",
+    "UndoNoActor": "Could not undo this transaction - the actor no longer exists.",
+    "UndoFailed": "Something went wrong while undoing this transaction. Check the console for details.",
+    "UndoSuccess": "Reversed the shop transaction for {actor}.",
+    "RestockNote": "This sale restocked the shop with the sold item(s) - remove them from Shop Items manually if you don't want them available again.",
+    "TransactionHistory": "Transaction History",
+    "NoTransactionHistory": "No transactions recorded yet for this shop.",
+    "HistoryBuySummary": "{user} bought for {actor} - {total}",
+    "HistorySellSummary": "{user} sold for {actor} - {total}"
   }
 }
